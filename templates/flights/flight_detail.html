@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+{% block title %}{{ flight.route.origin.city }} به {{ flight.route.destination.city }}{% endblock %}
+
+{% block content %}
+<a href="{% url 'flights:flight_list' %}" class="back-link">→ بازگشت به لیست پروازها</a>
+
+<section class="flight-hero">
+  <div class="flight-hero-route">
+    <div class="flight-hero-city">
+      <span class="city-name">{{ flight.route.origin.city }}</span>
+      <span class="airport-name">{{ flight.route.origin.name }} ({{ flight.route.origin.iata_code }})</span>
+    </div>
+    <div class="flight-hero-line"><span class="plane-icon">✈</span></div>
+    <div class="flight-hero-city">
+      <span class="city-name">{{ flight.route.destination.city }}</span>
+      <span class="airport-name">{{ flight.route.destination.name }} ({{ flight.route.destination.iata_code }})</span>
+    </div>
+  </div>
+  <div class="flight-hero-meta">
+    <span class="mono">{{ flight.flight_number }}</span>
+    <span>{{ flight.airline.name }}</span>
+    <span>{{ flight.airplane_type }}</span>
+    <span>{{ flight.departure_datetime|date:"Y/m/d - H:i" }} تا {{ flight.arrival_datetime|date:"H:i" }}</span>
+  </div>
+</section>
+
+<section class="seat-classes">
+  <h2>انتخاب کلاس پرواز</h2>
+  {% for seat_class in flight.seat_classes.all %}
+    <div class="seat-row">
+      <div class="seat-info">
+        <span class="seat-type">{{ seat_class.get_class_type_display }}</span>
+        <span class="seat-availability">
+          {% if seat_class.available_seats > 0 %}
+            {{ seat_class.available_seats }} صندلی باقی‌مانده
+          {% else %}
+            ظرفیت تکمیل
+          {% endif %}
+        </span>
+      </div>
+      <div class="seat-price mono">{{ seat_class.final_price|floatformat:0 }} <small>تومان</small></div>
+      {% if seat_class.available_seats > 0 %}
+        <a href="{% url 'tickets:reservation_create' seat_class.pk %}" class="btn btn-accent btn-sm">انتخاب و رزرو</a>
+      {% else %}
+        <span class="btn btn-disabled btn-sm">تکمیل ظرفیت</span>
+      {% endif %}
+    </div>
+  {% empty %}
+    <p class="empty-state">هنوز کلاس صندلی برای این پرواز تعریف نشده است.</p>
+  {% endfor %}
+</section>
+{% endblock %}

@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block title %}اطلاعات مسافران{% endblock %}
+
+{% block content %}
+<section class="auth-card auth-card-wide">
+  <h1 class="page-title">اطلاعات مسافران</h1>
+  <p class="seat-summary mono">کد رزرو: {{ reservation.booking_reference }}</p>
+
+  <form method="post" novalidate>
+    {% csrf_token %}
+    {{ formset.management_form }}
+    {% for pform in formset %}
+      <div class="passenger-form-block">
+        <h3>مسافر {{ forloop.counter }}</h3>
+        {% for field in pform %}
+          <div class="field">
+            <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+            {{ field }}
+            {% for error in field.errors %}<p class="field-error">{{ error }}</p>{% endfor %}
+          </div>
+        {% endfor %}
+      </div>
+    {% endfor %}
+    {% for error in formset.non_form_errors %}<p class="field-error">{{ error }}</p>{% endfor %}
+    <button type="submit" class="btn btn-primary btn-block">ثبت نهایی</button>
+  </form>
+</section>
+{% endblock %}

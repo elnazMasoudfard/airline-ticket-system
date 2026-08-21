@@ -1,0 +1,55 @@
+{% extends 'base.html' %}
+{% block title %}رزرو {{ reservation.booking_reference }}{% endblock %}
+
+{% block content %}
+<a href="{% url 'tickets:reservation_list' %}" class="back-link">→ بازگشت به رزروهای من</a>
+
+<section class="boarding-pass">
+  <div class="boarding-pass-header">
+    <span class="mono boarding-ref">{{ reservation.booking_reference }}</span>
+    <span class="badge {% if reservation.status == 'reserved' %}badge-success{% else %}badge-danger{% endif %}">
+      {{ reservation.get_status_display }}
+    </span>
+  </div>
+
+  <div class="boarding-pass-route">
+    <span>{{ reservation.seat_class.flight.route.origin.city }}</span>
+    <span class="plane-icon" style="position:static; transform: rotate(-45deg); background:transparent;">✈</span>
+    <span>{{ reservation.seat_class.flight.route.destination.city }}</span>
+  </div>
+
+  <div class="boarding-pass-details">
+    <div><span class="detail-label">پرواز</span><span class="mono">{{ reservation.seat_class.flight.flight_number }}</span></div>
+    <div><span class="detail-label">تاریخ حرکت</span><span>{{ reservation.seat_class.flight.departure_datetime|date:"Y/m/d - H:i" }}</span></div>
+    <div><span class="detail-label">کلاس</span><span>{{ reservation.seat_class.get_class_type_display }}</span></div>
+    <div><span class="detail-label">تعداد صندلی</span><span>{{ reservation.seats_count }}</span></div>
+    <div><span class="detail-label">مبلغ پرداختی</span><span class="mono">{{ reservation.total_paid_price|floatformat:0 }} تومان</span></div>
+    {% if reservation.status == 'cancelled' %}
+      <div><span class="detail-label">مبلغ استرداد</span><span class="mono">{{ reservation.refund_amount|floatformat:0 }} تومان</span></div>
+    {% endif %}
+  </div>
+
+  <div class="boarding-pass-divider"></div>
+
+  <div class="passengers-section">
+    <h2>مسافران</h2>
+    {% if reservation.passengers.all %}
+      <ul class="passenger-list">
+        {% for passenger in reservation.passengers.all %}
+          <li>{{ passenger.first_name }} {{ passenger.last_name }} — <span class="mono">{{ passenger.national_id }}</span></li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="empty-hint">هنوز اطلاعات مسافران ثبت نشده است.</p>
+      <a href="{% url 'tickets:add_passengers' reservation.booking_reference %}" class="btn btn-accent btn-sm">تکمیل اطلاعات مسافران</a>
+    {% endif %}
+  </div>
+</section>
+
+{% if reservation.status == 'reserved' %}
+  <form action="{% url 'tickets:reservation_cancel' reservation.booking_reference %}" method="post" class="cancel-form">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-danger">کنسل کردن رزرو</button>
+  </form>
+{% endif %}
+{% endblock %}

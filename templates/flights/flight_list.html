@@ -1,0 +1,89 @@
+{% extends 'base.html' %}
+{% block title %}جستجوی پرواز{% endblock %}
+
+{% block content %}
+<section class="search-panel">
+  <h1 class="page-title">به کجا پرواز می‌کنی؟</h1>
+  <form method="get" class="search-form">
+    <div class="field">
+      <label for="{{ search_form.origin.id_for_label }}">مبدا</label>
+      {{ search_form.origin }}
+    </div>
+    <div class="field">
+      <label for="{{ search_form.destination.id_for_label }}">مقصد</label>
+      {{ search_form.destination }}
+    </div>
+    <div class="field">
+      <label for="{{ search_form.departure_date.id_for_label }}">تاریخ حرکت</label>
+      {{ search_form.departure_date }}
+    </div>
+    <div class="field">
+      <label for="{{ search_form.passengers.id_for_label }}">مسافر</label>
+      {{ search_form.passengers }}
+    </div>
+    <button type="submit" class="btn btn-accent search-submit">جستجوی پرواز</button>
+  </form>
+
+  {% if search_form.non_field_errors or search_form.errors %}
+    <div class="form-errors">
+      {% for error in search_form.non_field_errors %}<p class="field-error">{{ error }}</p>{% endfor %}
+      {% for field in search_form %}
+        {% for error in field.errors %}<p class="field-error">{{ field.label }}: {{ error }}</p>{% endfor %}
+      {% endfor %}
+    </div>
+  {% endif %}
+</section>
+
+<section class="results">
+  <div class="results-header">
+    <h2>پروازهای موجود</h2>
+    <span class="results-count">{{ flights|length }} پرواز</span>
+  </div>
+
+  {% if flights %}
+    <div class="ticket-list">
+      {% for flight in flights %}
+        <a href="{% url 'flights:flight_detail' flight.pk %}" class="ticket-card">
+          <div class="ticket-main">
+            <span class="ticket-airline">{{ flight.airline.name }}</span>
+            <div class="ticket-route">
+              <span class="ticket-city">{{ flight.route.origin.city }}</span>
+              <span class="ticket-route-line"><span class="plane-icon">✈</span></span>
+              <span class="ticket-city">{{ flight.route.destination.city }}</span>
+            </div>
+            <div class="ticket-meta">
+              <span class="mono">{{ flight.flight_number }}</span>
+              <span>{{ flight.departure_datetime|date:"Y/m/d - H:i" }}</span>
+            </div>
+          </div>
+          <div class="ticket-divider" aria-hidden="true"></div>
+          <div class="ticket-side">
+            <div class="ticket-price">
+              <span class="mono">{{ flight.base_price|floatformat:0 }}</span>
+              <small>تومان از هر نفر</small>
+            </div>
+            <span class="btn btn-primary btn-sm">مشاهده و رزرو</span>
+          </div>
+        </a>
+      {% endfor %}
+    </div>
+
+    {% if is_paginated %}
+      <nav class="pagination">
+        {% if page_obj.has_previous %}
+          <a href="?page={{ page_obj.previous_page_number }}">قبلی</a>
+        {% endif %}
+        <span>صفحه {{ page_obj.number }} از {{ page_obj.paginator.num_pages }}</span>
+        {% if page_obj.has_next %}
+          <a href="?page={{ page_obj.next_page_number }}">بعدی</a>
+        {% endif %}
+      </nav>
+    {% endif %}
+  {% else %}
+    <div class="empty-state">
+      <p>پروازی با این مشخصات پیدا نشد.</p>
+      <p class="empty-hint">مبدا، مقصد یا تاریخ دیگری را امتحان کنید.</p>
+    </div>
+  {% endif %}
+</section>
+{% endblock %}

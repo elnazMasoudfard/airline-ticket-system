@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+{% block title %}ثبت‌نام{% endblock %}
+
+{% block content %}
+<section class="auth-card">
+  <h1 class="page-title">ساخت حساب کاربری</h1>
+  <form method="post" novalidate>
+    {% csrf_token %}
+    {% for field in form %}
+      <div class="field">
+        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}
+        {% if field.help_text %}<p class="field-hint">{{ field.help_text }}</p>{% endif %}
+        {% for error in field.errors %}<p class="field-error">{{ error }}</p>{% endfor %}
+      </div>
+    {% endfor %}
+    {% for error in form.non_field_errors %}<p class="field-error">{{ error }}</p>{% endfor %}
+    <button type="submit" class="btn btn-primary btn-block">ثبت‌نام</button>
+  </form>
+  <p class="auth-switch">حساب داری؟ <a href="{% url 'accounts:login' %}">وارد شو</a></p>
+</section>
+{% endblock %}

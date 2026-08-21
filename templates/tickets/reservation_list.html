@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block title %}رزروهای من{% endblock %}
+
+{% block content %}
+<h1 class="page-title">رزروهای من</h1>
+
+{% if reservations %}
+  <div class="ticket-list">
+    {% for reservation in reservations %}
+      <a href="{% url 'tickets:reservation_detail' reservation.booking_reference %}" class="ticket-card">
+        <div class="ticket-main">
+          <span class="ticket-airline">{{ reservation.seat_class.flight.airline.name }}</span>
+          <div class="ticket-route">
+            <span class="ticket-city">{{ reservation.seat_class.flight.route.origin.city }}</span>
+            <span class="ticket-route-line"><span class="plane-icon">✈</span></span>
+            <span class="ticket-city">{{ reservation.seat_class.flight.route.destination.city }}</span>
+          </div>
+          <div class="ticket-meta">
+            <span class="mono">{{ reservation.booking_reference }}</span>
+            <span>{{ reservation.seat_class.flight.departure_datetime|date:"Y/m/d - H:i" }}</span>
+          </div>
+        </div>
+        <div class="ticket-divider" aria-hidden="true"></div>
+        <div class="ticket-side">
+          <span class="badge {% if reservation.status == 'reserved' %}badge-success{% else %}badge-danger{% endif %}">
+            {{ reservation.get_status_display }}
+          </span>
+          <span class="mono">{{ reservation.total_paid_price|floatformat:0 }} تومان</span>
+        </div>
+      </a>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty-state">
+    <p>هنوز رزروی ثبت نکرده‌ای.</p>
+    <p class="empty-hint"><a href="{% url 'flights:flight_list' %}" class="btn btn-primary" style="margin-top:14px;">جستجوی پرواز</a></p>
+  </div>
+{% endif %}
+{% endblock %}

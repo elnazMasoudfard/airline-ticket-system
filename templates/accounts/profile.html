@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block title %}پروفایل من{% endblock %}
+
+{% block content %}
+<section class="profile-header">
+  <h1 class="page-title">سلام {{ profile_user.get_full_name|default:profile_user.username }} 👋</h1>
+</section>
+
+<section class="profile-grid">
+  <div class="profile-card">
+    <span class="profile-card-label">موجودی کیف پول</span>
+    <span class="profile-card-value mono">{{ profile_user.wallet_balance|floatformat:0 }} تومان</span>
+  </div>
+
+  <div class="profile-card">
+    <span class="profile-card-label">شماره موبایل</span>
+    <span class="profile-card-value">{{ profile_user.phone_number|default:"ثبت نشده" }}</span>
+    <span class="badge {% if profile_user.phone_verified %}badge-success{% else %}badge-muted{% endif %}">
+      {% if profile_user.phone_verified %}تایید شده{% else %}تایید نشده{% endif %}
+    </span>
+  </div>
+
+  <div class="profile-card">
+    <span class="profile-card-label">ایمیل</span>
+    <span class="profile-card-value">{{ profile_user.email|default:"ثبت نشده" }}</span>
+    <span class="badge {% if profile_user.email_verified %}badge-success{% else %}badge-muted{% endif %}">
+      {% if profile_user.email_verified %}تایید شده{% else %}تایید نشده{% endif %}
+    </span>
+  </div>
+</section>
+
+<a href="{% url 'tickets:reservation_list' %}" class="btn btn-primary">مشاهده رزروهای من</a>
+{% endblock %}

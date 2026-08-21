@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+{% block title %}رزرو صندلی{% endblock %}
+
+{% block content %}
+<section class="auth-card">
+  <h1 class="page-title">رزرو {{ seat_class.get_class_type_display }}</h1>
+  <p class="seat-summary mono">{{ seat_class.flight.flight_number }} — {{ seat_class.final_price|floatformat:0 }} تومان برای هر صندلی</p>
+
+  <form method="post" novalidate>
+    {% csrf_token %}
+    {% for field in form %}
+      <div class="field">
+        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}
+        {% for error in field.errors %}<p class="field-error">{{ error }}</p>{% endfor %}
+      </div>
+    {% endfor %}
+    <button type="submit" class="btn btn-accent btn-block">ادامه و پرداخت از کیف پول</button>
+  </form>
+</section>
+{% endblock %}

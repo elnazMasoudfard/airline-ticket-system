@@ -1,0 +1,68 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}پروازها{% endblock %} | آسمان‌یار</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'css/main.css' %}">
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container header-inner">
+    <a href="{% url 'flights:flight_list' %}" class="brand">
+      <span class="brand-mark">✈</span>
+      <span class="brand-name">آسمان‌یار</span>
+    </a>
+
+    <nav class="main-nav">
+      <a href="{% url 'flights:flight_list' %}">پروازها</a>
+      {% if user.is_authenticated %}
+        <a href="{% url 'tickets:reservation_list' %}">رزروهای من</a>
+      {% endif %}
+    </nav>
+
+    <div class="header-auth">
+      {% if user.is_authenticated %}
+        <a href="{% url 'accounts:profile' %}" class="wallet-chip">
+          <span class="wallet-label">کیف پول</span>
+          <span class="wallet-amount mono">{{ user.wallet_balance|floatformat:0 }} <small>تومان</small></span>
+        </a>
+        <form action="{% url 'accounts:logout' %}" method="post" class="inline-form">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-ghost btn-sm">خروج</button>
+        </form>
+      {% else %}
+        <a href="{% url 'accounts:login' %}" class="btn btn-ghost btn-sm">ورود</a>
+        <a href="{% url 'accounts:register' %}" class="btn btn-primary btn-sm">ثبت‌نام</a>
+      {% endif %}
+    </div>
+  </div>
+</header>
+
+{% if messages %}
+  <div class="container messages-wrap">
+    {% for message in messages %}
+      <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+    {% endfor %}
+  </div>
+{% endif %}
+
+<main class="site-main">
+  <div class="container">
+    {% block content %}{% endblock %}
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <span>© {% now "Y" %} آسمان‌یار — سامانه فروش بلیط هواپیما</span>
+  </div>
+</footer>
+
+</body>
+</html>
