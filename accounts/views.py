@@ -5,7 +5,7 @@ from django.shortcuts import redirect
 from django.urls import reverse_lazy
 from django.views.generic import DetailView, FormView, View
 
-from .forms import LoginForm, RegistrationForm
+from .forms import DepositForm, LoginForm, RegistrationForm
 from .models import CustomUser
 
 
@@ -56,3 +56,24 @@ class ProfileView(LoginRequiredMixin, DetailView):
 
     def get_object(self, queryset=None):
         return self.request.user
+
+
+class DepositView(LoginRequiredMixin, FormView):
+    """
+    شارژ کیف پول.
+    توجه: این یک شارژ شبیه‌سازی‌شده است و به هیچ درگاه پرداخت واقعی وصل نیست
+    (طبق تعریف پروژه، اتصال به درگاه پرداخت واقعی جزو الزامات نیست).
+    """
+    template_name = 'accounts/deposit.html'
+    form_class = DepositForm
+    success_url = reverse_lazy('accounts:profile')
+
+    def form_valid(self, form):
+        amount = form.cleaned_data['amount']
+        self.request.user.deposit(amount)
+        messages.success(
+            self.request,
+            f"مبلغ {amount:.0f} تومان به کیف پول شما اضافه شد. "
+            f"(این یک شارژ شبیه‌سازی‌شده است و به درگاه پرداخت واقعی متصل نیست.)"
+        )
+        return super().form_valid(form)

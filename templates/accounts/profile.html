@@ -10,6 +10,7 @@
   <div class="profile-card">
     <span class="profile-card-label">موجودی کیف پول</span>
     <span class="profile-card-value mono">{{ profile_user.wallet_balance|floatformat:0 }} تومان</span>
+    <a href="{% url 'accounts:deposit' %}" class="btn btn-accent btn-sm" style="width: fit-content;">شارژ کیف پول</a>
   </div>
 
   <div class="profile-card">

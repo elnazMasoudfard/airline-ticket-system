@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django import forms
 from django.contrib.auth.forms import UserCreationForm
 
@@ -44,4 +46,14 @@ class LoginForm(forms.Form):
     password = forms.CharField(
         widget=forms.PasswordInput(attrs={'class': 'form-control'}),
         label="رمز عبور"
+    )
+
+
+class DepositForm(forms.Form):
+    amount = forms.DecimalField(
+        min_value=Decimal('1000'),
+        max_digits=12,
+        decimal_places=2,
+        widget=forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'مثلاً 500000'}),
+        label="مبلغ شارژ (تومان)"
     )
