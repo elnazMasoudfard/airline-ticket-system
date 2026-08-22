@@ -68,22 +68,24 @@ class Flight(TimeStampedModel):
         ACTIVE = 'active', 'در حال انجام'
         COMPLETED = 'completed', 'انجام شده'
         CANCELLED = 'cancelled', 'لغو شده'
-        
+
     class AirplaneTypeChoices(models.TextChoices):
-        AIRBUS_A320 = 'Airbus A320', 'ایرباس A320'
-        AIRBUS_A330 = 'Airbus A330', 'ایرباس A330'
-        BOEING_737 = 'Boeing 737', 'بوئینگ 737'
-        BOEING_777 = 'Boeing 777', 'بوئینگ 777'
-        FOKKER_100 = 'Fokker 100', 'فوکر 100'
-        ATR_72 = 'ATR 72', 'ای‌تی‌آر 72'
+        A320 = 'a320', 'ایرباس A320'
+        A321 = 'a321', 'ایرباس A321'
+        A330 = 'a330', 'ایرباس A330'
+        B737 = 'b737', 'بوئینگ 737'
+        B777 = 'b777', 'بوئینگ 777'
+        B787 = 'b787', 'بوئینگ 787 دریم‌لاینر'
+        ATR72 = 'atr72', 'ATR 72'
+        MD88 = 'md88', 'مک‌دانل داگلاس MD-88'
+        FOKKER100 = 'fokker100', 'فوکر 100'
 
     flight_number = models.CharField(max_length=20, unique=True, verbose_name="شماره پرواز")
     route = models.ForeignKey(Route, on_delete=models.PROTECT, related_name='flights', verbose_name="مسیر")
     airline = models.ForeignKey(Airline, on_delete=models.PROTECT, related_name='flights', verbose_name="ایرلاین")
     airplane_type = models.CharField(
-        max_length=60,
+        max_length=15,
         choices=AirplaneTypeChoices.choices,
-        default=AirplaneTypeChoices.AIRBUS_A320,
         verbose_name="نوع هواپیما"
     )
     departure_datetime = models.DateTimeField(db_index=True, verbose_name="تاریخ و ساعت حرکت")
@@ -169,8 +171,8 @@ class SeatClass(TimeStampedModel):
 
     def reserve_seats(self, count: int) -> None:
         """
-        به‌صورت اتمیک تعداد مشخصی صندلی رزرو می‌کند.
-        از race condition جلوگیری می‌کند (مثلاً دو کاربر همزمان آخرین صندلی را می‌خرند).
+        به‌صورت اتمیک تعداد مشخصی صندلی رزرو می‌کند (فقط شمارنده‌ی کلی).
+        برای رزرو صندلی‌های مشخص از Seat.reserve_specific_seats استفاده کنید.
         """
         if count < 1:
             raise ValueError("تعداد صندلی باید حداقل ۱ باشد.")
@@ -189,3 +191,34 @@ class SeatClass(TimeStampedModel):
             available_seats=F('available_seats') + count
         )
         self.refresh_from_db(fields=['available_seats'])
+
+
+class Seat(TimeStampedModel):
+    """
+    یک صندلی مشخص در یک کلاس پروازی خاص (مثلاً ردیف ۱۲، ستون C).
+    این مدل امکان انتخاب صندلی مشخص توسط کاربر و تضمین کنار هم بودن
+    صندلی‌ها برای رزروهای گروهی را فراهم می‌کند.
+    """
+    seat_class = models.ForeignKey(
+        SeatClass, on_delete=models.CASCADE, related_name='seats', verbose_name="کلاس صندلی"
+    )
+    row_number = models.PositiveSmallIntegerField(verbose_name="شماره ردیف")
+    column_letter = models.CharField(max_length=1, verbose_name="حرف ستون")
+    is_available = models.BooleanField(default=True, verbose_name="در دسترس")
+
+    class Meta:
+        verbose_name = "صندلی"
+        verbose_name_plural = "صندلی‌ها"
+        ordering = ['row_number', 'column_letter']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['seat_class', 'row_number', 'column_letter'], name='unique_seat_per_class'
+            )
+        ]
+
+    @property
+    def seat_number(self) -> str:
+        return f"{self.row_number}{self.column_letter}"
+
+    def __str__(self):
+        return f"{self.seat_class} - {self.seat_number}"
