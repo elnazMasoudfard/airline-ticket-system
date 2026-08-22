@@ -23,6 +23,12 @@
     <div><span class="detail-label">تاریخ حرکت</span><span>{{ reservation.seat_class.flight.departure_datetime|date:"Y/m/d - H:i" }}</span></div>
     <div><span class="detail-label">کلاس</span><span>{{ reservation.seat_class.get_class_type_display }}</span></div>
     <div><span class="detail-label">تعداد صندلی</span><span>{{ reservation.seats_count }}</span></div>
+    <div>
+      <span class="detail-label">شماره صندلی‌ها</span>
+      <span class="mono">
+        {% for rs in reservation.reservation_seats.all %}{{ rs.seat.seat_number }}{% if not forloop.last %}, {% endif %}{% endfor %}
+      </span>
+    </div>
     <div><span class="detail-label">مبلغ پرداختی</span><span class="mono">{{ reservation.total_paid_price|floatformat:0 }} تومان</span></div>
     {% if reservation.status == 'cancelled' %}
       <div><span class="detail-label">مبلغ استرداد</span><span class="mono">{{ reservation.refund_amount|floatformat:0 }} تومان</span></div>
@@ -47,9 +53,30 @@
 </section>
 
 {% if reservation.status == 'reserved' %}
-  <form action="{% url 'tickets:reservation_cancel' reservation.booking_reference %}" method="post" class="cancel-form">
-    {% csrf_token %}
-    <button type="submit" class="btn btn-danger">کنسل کردن رزرو</button>
-  </form>
+  <div class="cancel-form">
+    <button type="button" class="btn btn-danger" onclick="document.getElementById('cancelModal').classList.add('modal-open')">
+      کنسل کردن رزرو
+    </button>
+  </div>
+
+  <div class="modal-overlay" id="cancelModal">
+    <div class="modal-box">
+      <h3>لغو رزرو</h3>
+      <p>
+        آیا مطمئن هستید که می‌خواهید رزرو <strong class="mono">{{ reservation.booking_reference }}</strong> را کنسل کنید؟
+        بر اساس سیاست جریمه‌ی کنسلی این پرواز ({{ reservation.seat_class.flight.cancellation_penalty_percent }}٪)،
+        بخشی از مبلغ پرداختی ممکن است کسر شود.
+      </p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" onclick="document.getElementById('cancelModal').classList.remove('modal-open')">
+          انصراف
+        </button>
+        <form action="{% url 'tickets:reservation_cancel' reservation.booking_reference %}" method="post" class="inline-form">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-danger">بله، کنسل کن</button>
+        </form>
+      </div>
+    </div>
+  </div>
 {% endif %}
 {% endblock %}

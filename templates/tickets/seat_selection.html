@@ -1,0 +1,77 @@
+{% extends 'base.html' %}
+{% block title %}انتخاب صندلی{% endblock %}
+
+{% block content %}
+<section class="auth-card auth-card-wide">
+  <h1 class="page-title">انتخاب صندلی</h1>
+  <p class="seat-summary mono">
+    {{ seat_class.flight.flight_number }} — {{ seat_class.get_class_type_display }} —
+    لطفاً {{ seats_count }} صندلی انتخاب کنید
+  </p>
+
+  {% if seats_count > 1 %}
+    <div class="alert alert-info">
+      برای رزرو گروهی، صندلی‌ها باید در یک ردیف و کنار هم باشند.
+    </div>
+  {% endif %}
+
+  <form method="post" id="seatForm">
+    {% csrf_token %}
+    <input type="hidden" name="seats_count" value="{{ seats_count }}">
+
+    <div class="seat-map">
+      {% regroup seats by row_number as row_list %}
+      {% for row in row_list %}
+        <div class="seat-row-map">
+          <span class="seat-row-label mono">{{ row.grouper }}</span>
+          <div class="seat-row-buttons">
+            {% for seat in row.list %}
+              <label class="seat-btn {% if not seat.is_available %}seat-btn-taken{% endif %}">
+                <input
+                  type="checkbox"
+                  name="seat_ids"
+                  value="{{ seat.id }}"
+                  {% if not seat.is_available %}disabled{% endif %}
+                  onchange="handleSeatToggle(this)"
+                >
+                <span class="mono">{{ seat.column_letter }}</span>
+              </label>
+            {% endfor %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+    <div class="seat-map-legend">
+      <span><span class="legend-dot legend-available"></span> آزاد</span>
+      <span><span class="legend-dot legend-selected"></span> انتخاب‌شده</span>
+      <span><span class="legend-dot legend-taken"></span> رزروشده</span>
+    </div>
+
+    <p id="seatSelectionCount" class="seat-summary">۰ از {{ seats_count }} صندلی انتخاب شده</p>
+
+    <button type="submit" class="btn btn-accent btn-block" id="seatSubmitBtn" disabled>
+      تایید انتخاب و پرداخت
+    </button>
+  </form>
+</section>
+
+<script>
+  const REQUIRED_COUNT = {{ seats_count }};
+
+  function handleSeatToggle(checkbox) {
+    const checked = document.querySelectorAll('input[name="seat_ids"]:checked');
+    const label = checkbox.closest('.seat-btn');
+
+    if (checked.length > REQUIRED_COUNT) {
+      checkbox.checked = false;
+    } else {
+      label.classList.toggle('seat-btn-selected', checkbox.checked);
+    }
+
+    const currentCount = document.querySelectorAll('input[name="seat_ids"]:checked').length;
+    document.getElementById('seatSelectionCount').textContent = currentCount + ' از ' + REQUIRED_COUNT + ' صندلی انتخاب شده';
+    document.getElementById('seatSubmitBtn').disabled = currentCount !== REQUIRED_COUNT;
+  }
+</script>
+{% endblock %}

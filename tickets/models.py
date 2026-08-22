@@ -5,7 +5,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, RegexValidator
 from django.db import models
 from core.models import TimeStampedModel
-from flights.models import SeatClass
+from flights.models import Seat, SeatClass
 
 
 class Reservation(TimeStampedModel):
@@ -102,3 +102,29 @@ class Passenger(TimeStampedModel):
 
     def __str__(self):
         return f"{self.first_name} {self.last_name} ({self.national_id})"
+
+
+class ReservationSeat(TimeStampedModel):
+    """
+    پیوند بین یک رزرو و صندلی‌های مشخصی که برای آن رزرو اختصاص یافته‌اند.
+    هر صندلی فقط می‌تواند به یک رزرو تعلق داشته باشد (OneToOne روی seat).
+    """
+    reservation = models.ForeignKey(
+        Reservation,
+        on_delete=models.CASCADE,
+        related_name='reservation_seats',
+        verbose_name="رزرو"
+    )
+    seat = models.OneToOneField(
+        Seat,
+        on_delete=models.PROTECT,
+        related_name='reservation_seat',
+        verbose_name="صندلی"
+    )
+
+    class Meta:
+        verbose_name = "صندلی رزروشده"
+        verbose_name_plural = "صندلی‌های رزروشده"
+
+    def __str__(self):
+        return f"{self.reservation.booking_reference} - {self.seat.seat_number}"
