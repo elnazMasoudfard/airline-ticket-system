@@ -566,3 +566,224 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ===== Confirmation modal (append to main.css) ===== */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(28, 37, 65, 0.55);
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+
+.modal-overlay.modal-open { display: flex; }
+
+.modal-box {
+  background: var(--color-surface);
+  border-radius: var(--radius-card);
+  padding: 28px;
+  max-width: 420px;
+  width: 100%;
+  box-shadow: var(--shadow-card);
+}
+
+.modal-box h3 {
+  margin: 0 0 12px;
+  color: var(--color-primary);
+  font-size: 1.15rem;
+}
+
+.modal-box p {
+  color: var(--color-ink-soft);
+  font-size: .92rem;
+  margin: 0;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+/* ===== Dashboard table (append to main.css) ===== */
+.dashboard-table-wrap {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  overflow-x: auto;
+  box-shadow: var(--shadow-card);
+}
+
+.dashboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .88rem;
+}
+
+.dashboard-table th {
+  text-align: right;
+  padding: 14px 16px;
+  background: var(--color-bg);
+  color: var(--color-ink-soft);
+  font-weight: 600;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.dashboard-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.dashboard-table tr:last-child td { border-bottom: none; }
+
+.dashboard-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.form-section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 24px;
+  margin-bottom: 20px;
+}
+
+.form-section h2 {
+  font-size: 1rem;
+  margin: 0 0 16px;
+  color: var(--color-primary);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.formset-block {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  margin-bottom: 12px;
+  position: relative;
+}
+
+.formset-delete {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .82rem;
+  color: var(--color-danger);
+}
+
+.formset-delete input { margin: 0; }
+
+.formset-block-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--color-border);
+  flex-wrap: wrap;
+}
+
+@media (max-width: 700px) {
+  .form-grid { grid-template-columns: 1fr; }
+}
+
+/* ===== Seat map (append to main.css) ===== */
+.seat-map {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 20px 0;
+  padding: 20px;
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+}
+
+.seat-row-map {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.seat-row-label {
+  width: 24px;
+  text-align: center;
+  color: var(--color-ink-soft);
+  font-size: .8rem;
+}
+
+.seat-row-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.seat-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1.5px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  cursor: pointer;
+  font-size: .78rem;
+  color: var(--color-ink-soft);
+  transition: all .12s ease;
+}
+
+.seat-btn input { position: absolute; opacity: 0; pointer-events: none; }
+
+.seat-btn:hover { border-color: var(--color-accent); }
+
+.seat-btn-selected {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+  font-weight: 700;
+}
+
+.seat-btn-taken {
+  background: var(--color-border);
+  color: var(--color-ink-soft);
+  cursor: not-allowed;
+  opacity: .6;
+}
+
+.seat-map-legend {
+  display: flex;
+  gap: 20px;
+  font-size: .8rem;
+  color: var(--color-ink-soft);
+  margin-bottom: 16px;
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.legend-available { background: var(--color-surface); border: 1.5px solid var(--color-border); }
+.legend-selected { background: var(--color-accent); }
+.legend-taken { background: var(--color-border); }
