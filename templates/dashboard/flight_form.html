@@ -1,0 +1,75 @@
+{% extends 'base.html' %}
+{% block title %}{% if is_edit %}ویرایش پرواز{% else %}پرواز جدید{% endif %}{% endblock %}
+
+{% block content %}
+<a href="{% url 'dashboard:flight_manage_list' %}" class="back-link">→ بازگشت به لیست پروازها</a>
+
+<h1 class="page-title">{% if is_edit %}ویرایش پرواز {{ flight.flight_number }}{% else %}ایجاد پرواز جدید{% endif %}</h1>
+
+<form method="post" novalidate>
+  {% csrf_token %}
+
+  <div class="form-section">
+    <h2>اطلاعات پرواز</h2>
+    <div class="form-grid">
+      {% for field in form %}
+        <div class="field">
+          <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+          {{ field }}
+          {% for error in field.errors %}<p class="field-error">{{ error }}</p>{% endfor %}
+        </div>
+      {% endfor %}
+    </div>
+    {% for error in form.non_field_errors %}<p class="field-error">{{ error }}</p>{% endfor %}
+  </div>
+
+  <div class="form-section">
+    <h2>کلاس‌های صندلی</h2>
+
+    {% if is_edit %}
+      <form action="{% url 'dashboard:generate_seats' flight.pk %}" method="post" style="margin-bottom: 18px;">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-accent btn-sm">
+          ساخت خودکار صندلی‌ها برای این پرواز
+        </button>
+        <span class="field-hint" style="display:block; margin-top:6px;">
+          برای کلاس‌هایی که هنوز صندلی ندارند، ردیف‌ها را پیوسته می‌سازد (اکونومی، بعد بیزینس، بعد فرست کلاس).
+        </span>
+      </form>
+    {% endif %}
+
+    {{ formset.management_form }}
+    {% for pform in formset %}
+      <div class="formset-block">
+        <div class="form-grid">
+          {% for field in pform.visible_fields %}
+            {% if field.name != 'DELETE' %}
+              <div class="field">
+                <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                {{ field }}
+                {% for error in field.errors %}<p class="field-error">{{ error }}</p>{% endfor %}
+              </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+        {% for hidden in pform.hidden_fields %}{{ hidden }}{% endfor %}
+        {% if pform.instance.pk %}
+          <div class="formset-block-footer">
+            <a href="/admin/flights/seat/?seat_class__id__exact={{ pform.instance.pk }}" target="_blank" class="btn btn-ghost btn-sm">
+              مدیریت صندلی‌های این کلاس (پنل ادمین)
+            </a>
+            <label class="formset-delete">
+              {{ pform.DELETE }} <span>حذف این کلاس صندلی</span>
+            </label>
+          </div>
+        {% endif %}
+      </div>
+    {% endfor %}
+    {% for error in formset.non_form_errors %}<p class="field-error">{{ error }}</p>{% endfor %}
+  </div>
+
+  <button type="submit" class="btn btn-primary">
+    {% if is_edit %}ذخیره تغییرات{% else %}ایجاد پرواز{% endif %}
+  </button>
+</form>
+{% endblock %}

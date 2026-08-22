@@ -24,6 +24,9 @@
       {% if user.is_authenticated %}
         <a href="{% url 'tickets:reservation_list' %}">رزروهای من</a>
       {% endif %}
+      {% if user.is_staff %}
+        <a href="{% url 'dashboard:home' %}">پنل مدیریت</a>
+      {% endif %}
     </nav>
 
     <div class="header-auth">

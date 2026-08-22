@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+{% block title %}داشبورد مدیریت{% endblock %}
+
+{% block content %}
+<h1 class="page-title">داشبورد مدیریت</h1>
+
+<div class="profile-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 32px;">
+  <div class="profile-card">
+    <span class="profile-card-label">کل پروازها</span>
+    <span class="profile-card-value mono">{{ flight_count }}</span>
+  </div>
+  <div class="profile-card">
+    <span class="profile-card-label">پروازهای آینده</span>
+    <span class="profile-card-value mono">{{ upcoming_flight_count }}</span>
+  </div>
+  <div class="profile-card">
+    <span class="profile-card-label">رزروهای فعال</span>
+    <span class="profile-card-value mono">{{ active_reservation_count }}</span>
+  </div>
+  <div class="profile-card">
+    <span class="profile-card-label">کل کاربران</span>
+    <span class="profile-card-value mono">{{ user_count }}</span>
+  </div>
+</div>
+
+<div style="display: flex; gap: 12px;">
+  <a href="{% url 'dashboard:flight_manage_list' %}" class="btn btn-primary">مدیریت پروازها</a>
+  <a href="{% url 'dashboard:flight_create' %}" class="btn btn-accent">ایجاد پرواز جدید</a>
+  <a href="{% url 'admin:index' %}" class="btn btn-ghost">پنل ادمین جنگو</a>
+</div>
+{% endblock %}

@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+{% block title %}مدیریت پروازها{% endblock %}
+
+{% block content %}
+<div class="dashboard-toolbar">
+  <h1 class="page-title" style="margin-bottom: 0;">مدیریت پروازها</h1>
+  <a href="{% url 'dashboard:flight_create' %}" class="btn btn-accent btn-sm">+ پرواز جدید</a>
+</div>
+
+<div class="dashboard-table-wrap">
+  <table class="dashboard-table">
+    <thead>
+      <tr>
+        <th>شماره پرواز</th>
+        <th>مسیر</th>
+        <th>ایرلاین</th>
+        <th>حرکت</th>
+        <th>وضعیت</th>
+        <th>ظرفیت باقی‌مانده</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for flight in flights %}
+        <tr>
+          <td class="mono">{{ flight.flight_number }}</td>
+          <td>{{ flight.route.origin.city }} ← {{ flight.route.destination.city }}</td>
+          <td>{{ flight.airline.name }}</td>
+          <td>{{ flight.departure_datetime|date:"Y/m/d H:i" }}</td>
+          <td>
+            <span class="badge {% if flight.status == 'cancelled' %}badge-danger{% elif flight.status == 'completed' %}badge-muted{% else %}badge-success{% endif %}">
+              {{ flight.get_status_display }}
+            </span>
+          </td>
+          <td class="mono">{{ flight.total_available_seats }}</td>
+          <td><a href="{% url 'dashboard:flight_edit' flight.pk %}" class="btn btn-ghost btn-sm">ویرایش</a></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="7">هنوز پروازی ثبت نشده است.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if is_paginated %}
+  <nav class="pagination">
+    {% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}">قبلی</a>{% endif %}
+    <span>صفحه {{ page_obj.number }} از {{ page_obj.paginator.num_pages }}</span>
+    {% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}">بعدی</a>{% endif %}
+  </nav>
+{% endif %}
+{% endblock %}

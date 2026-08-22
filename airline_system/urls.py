@@ -8,6 +8,7 @@ urlpatterns = [
     path('', include('flights.urls')),
     path('accounts/', include('accounts.urls')),
     path('tickets/', include('tickets.urls')),
+    path('dashboard/', include('dashboard.urls')),
 ]
 
 if settings.DEBUG:
