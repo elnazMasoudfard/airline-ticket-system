@@ -808,3 +808,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   box-shadow: var(--shadow-card);
   border-color: var(--color-accent);
 }
+
+/* ===== Fix boarding-pass detail alignment ===== */
+.boarding-pass-details > div {
+  text-align: right;
+}
