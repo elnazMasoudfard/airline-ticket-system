@@ -19,7 +19,7 @@ class ReservationAdmin(admin.ModelAdmin):
     list_display = ['booking_reference', 'user', 'seat_class', 'seats_count', 'status', 'total_paid_price']
     list_filter = ['status']
     search_fields = ['booking_reference', 'user__username']
-    readonly_fields = ['booking_reference']
+    readonly_fields = ['booking_reference', 'status', 'cancelled_at', 'refund_amount']
     inlines = [ReservationSeatInline, PassengerInline]
 
 
