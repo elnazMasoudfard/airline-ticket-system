@@ -1,3 +1,5 @@
+import logging
+
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.mixins import LoginRequiredMixin
@@ -7,6 +9,9 @@ from django.views.generic import DetailView, FormView, View
 
 from .forms import DepositForm, LoginForm, RegistrationForm
 from .models import CustomUser
+
+logger = logging.getLogger('accounts')
+security_logger = logging.getLogger('accounts.security')
 
 
 class RegisterView(FormView):
@@ -18,6 +23,8 @@ class RegisterView(FormView):
     def form_valid(self, form):
         user = form.save()
         login(self.request, user)
+        logger.info(f"کاربر جدید ثبت‌نام کرد: username={user.username}, email={user.email}")
+        security_logger.info(f"ورود پس از ثبت‌نام: username={user.username}")
         messages.success(self.request, "ثبت‌نام با موفقیت انجام شد.")
         return super().form_valid(form)
 
@@ -29,21 +36,25 @@ class LoginView(FormView):
     success_url = reverse_lazy('flights:flight_list')
 
     def form_valid(self, form):
+        username = form.cleaned_data['username']
         user = authenticate(
             self.request,
-            username=form.cleaned_data['username'],
+            username=username,
             password=form.cleaned_data['password'],
         )
         if user is None:
+            security_logger.warning(f"تلاش ناموفق برای ورود: username={username}")
             form.add_error(None, "نام کاربری یا رمز عبور اشتباه است.")
             return self.form_invalid(form)
 
+        security_logger.info(f"ورود موفق کاربر: username={user.username}")
         login(self.request, user)
         return super().form_valid(form)
 
 
 class LogoutView(LoginRequiredMixin, View):
     def post(self, request, *args, **kwargs):
+        security_logger.info(f"خروج کاربر: username={request.user.username}")
         logout(request)
         return redirect('accounts:login')
 
@@ -71,6 +82,10 @@ class DepositView(LoginRequiredMixin, FormView):
     def form_valid(self, form):
         amount = form.cleaned_data['amount']
         self.request.user.deposit(amount)
+        logger.info(
+            f"شارژ کیف پول: user={self.request.user.username}, amount={amount}, "
+            f"new_balance={self.request.user.wallet_balance}"
+        )
         messages.success(
             self.request,
             f"مبلغ {amount:.0f} تومان به کیف پول شما اضافه شد. "

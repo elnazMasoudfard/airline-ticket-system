@@ -1,3 +1,4 @@
+import logging
 from decimal import Decimal
 
 from django.contrib import messages
@@ -15,6 +16,8 @@ from tickets.models import Reservation
 
 from .forms import FlightForm, SeatClassFormSet
 from .mixins import StaffRequiredMixin
+
+logger = logging.getLogger('dashboard')
 
 
 class DashboardHomeView(StaffRequiredMixin, View):
@@ -149,6 +152,7 @@ class FlightCreateView(StaffRequiredMixin, View):
                 flight = form.save()
                 formset.instance = flight
                 formset.save()
+            logger.info(f"پرواز جدید ایجاد شد توسط مدیر={request.user.username}: {flight.flight_number}")
             messages.success(request, f"پرواز {flight.flight_number} با موفقیت ایجاد شد.")
             return redirect('dashboard:flight_manage_list')
 
@@ -179,6 +183,7 @@ class FlightEditView(StaffRequiredMixin, View):
             with transaction.atomic():
                 form.save()
                 formset.save()
+            logger.info(f"پرواز ویرایش شد توسط مدیر={request.user.username}: {flight.flight_number}")
             messages.success(request, "پرواز با موفقیت به‌روزرسانی شد.")
             return redirect('dashboard:flight_manage_list')
 
@@ -196,6 +201,10 @@ class GenerateSeatsView(StaffRequiredMixin, View):
     def post(self, request, pk, *args, **kwargs):
         flight = get_object_or_404(Flight, pk=pk)
         created, skipped = generate_seats_for_flight(flight)
+        logger.info(
+            f"ساخت خودکار صندلی توسط مدیر={request.user.username} "
+            f"برای پرواز={flight.flight_number}: ساخته‌شده={created} رد‌شده={len(skipped)}"
+        )
 
         if created:
             messages.success(request, f"{created} صندلی برای پرواز {flight.flight_number} ساخته شد.")

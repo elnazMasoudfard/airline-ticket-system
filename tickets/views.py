@@ -1,3 +1,4 @@
+import logging
 from decimal import Decimal
 
 from django.contrib import messages
@@ -13,6 +14,8 @@ from django.views.generic import DetailView, ListView, View
 from flights.models import Seat, SeatClass
 from .forms import PassengerForm, ReservationForm
 from .models import Passenger, Reservation, ReservationSeat
+
+logger = logging.getLogger('tickets')
 
 
 class ReservationListView(LoginRequiredMixin, ListView):
@@ -78,10 +81,18 @@ class ReservationCreateView(LoginRequiredMixin, View):
         total_price = seat_class.final_price * seats_count
 
         if request.user.wallet_balance < total_price:
+            logger.warning(
+                f"موجودی ناکافی: user={request.user.username}, needed={total_price}, "
+                f"balance={request.user.wallet_balance}"
+            )
             messages.error(request, "موجودی کیف پول کافی نیست. لطفاً ابتدا حساب خود را شارژ کنید.")
             return render(request, self.template_name, {'seat_class': seat_class, 'form': form})
 
         if seat_class.available_seats < seats_count:
+            logger.warning(
+                f"ظرفیت ناکافی: user={request.user.username}, seat_class={seat_class.pk}, "
+                f"requested={seats_count}, available={seat_class.available_seats}"
+            )
             messages.error(request, "ظرفیت کافی برای این تعداد صندلی وجود ندارد.")
             return render(request, self.template_name, {'seat_class': seat_class, 'form': form})
 
@@ -114,6 +125,7 @@ class SeatSelectionView(LoginRequiredMixin, View):
         seats = seat_class.seats.all().order_by('row_number', 'column_letter')
 
         if not seats.exists():
+            logger.warning(f"نقشه‌ی صندلی موجود نیست: seat_class={seat_class.pk}")
             messages.error(
                 request,
                 "برای این کلاس پروازی هنوز نقشه‌ی صندلی تعریف نشده است. لطفاً با پشتیبانی تماس بگیرید."
@@ -140,6 +152,9 @@ class SeatSelectionView(LoginRequiredMixin, View):
 
         total_price = seat_class.final_price * seats_count
         if request.user.wallet_balance < total_price:
+            logger.warning(
+                f"موجودی ناکافی هنگام انتخاب صندلی: user={request.user.username}, needed={total_price}"
+            )
             messages.error(request, "موجودی کیف پول کافی نیست.")
             return render(request, self.template_name, context)
 
@@ -152,18 +167,28 @@ class SeatSelectionView(LoginRequiredMixin, View):
                 )
 
                 if len(locked_seats) != seats_count:
+                    logger.warning(
+                        f"تداخل رزرو صندلی: user={request.user.username}, seat_class={seat_class.pk}, "
+                        f"requested_ids={selected_ids}"
+                    )
                     messages.error(request, "متاسفانه یک یا چند صندلی انتخابی شما توسط کاربر دیگری رزرو شد. لطفاً دوباره انتخاب کنید.")
                     return render(request, self.template_name, context)
 
                 if seats_count > 1:
                     rows = {seat.row_number for seat in locked_seats}
                     if len(rows) != 1:
+                        logger.info(
+                            f"رد شد: صندلی‌های انتخابی هم‌ردیف نبودند: user={request.user.username}"
+                        )
                         messages.error(request, "برای بیش از یک نفر، صندلی‌ها باید در یک ردیف و کنار هم باشند.")
                         return render(request, self.template_name, context)
 
                     columns = sorted(ord(seat.column_letter) for seat in locked_seats)
                     expected = list(range(columns[0], columns[0] + len(columns)))
                     if columns != expected:
+                        logger.info(
+                            f"رد شد: صندلی‌های انتخابی کنار هم نبودند: user={request.user.username}"
+                        )
                         messages.error(request, "صندلی‌های انتخابی کنار هم نیستند. لطفاً صندلی‌های پیوسته انتخاب کنید.")
                         return render(request, self.template_name, context)
 
@@ -186,9 +211,16 @@ class SeatSelectionView(LoginRequiredMixin, View):
                 request.user.withdraw(total_price)
 
         except ValueError as e:
+            logger.error(f"خطا در برداشت از کیف پول: user={request.user.username}, error={e}")
             messages.error(request, str(e))
             return render(request, self.template_name, context)
 
+        logger.info(
+            f"رزرو جدید ثبت شد: booking_reference={reservation.booking_reference}, "
+            f"user={request.user.username}, flight={seat_class.flight.flight_number}, "
+            f"seats={seats_count}, total_price={total_price}, "
+            f"seat_numbers={[s.seat_number for s in locked_seats]}"
+        )
         messages.success(
             request,
             f"رزرو با کد {reservation.booking_reference} ثبت شد. حالا اطلاعات مسافران را وارد کنید."
@@ -224,6 +256,10 @@ class AddPassengersView(LoginRequiredMixin, View):
             for passenger in passengers:
                 passenger.reservation = reservation
                 passenger.save()
+            logger.info(
+                f"اطلاعات مسافران ثبت شد: booking_reference={reservation.booking_reference}, "
+                f"passenger_count={len(passengers)}"
+            )
             messages.success(request, "اطلاعات مسافران با موفقیت ثبت شد.")
             return redirect('tickets:reservation_detail', booking_reference=reservation.booking_reference)
 
@@ -267,5 +303,10 @@ class ReservationCancelView(LoginRequiredMixin, View):
 
             request.user.deposit(refund_amount)
 
+        logger.info(
+            f"رزرو کنسل شد: booking_reference={reservation.booking_reference}, "
+            f"user={request.user.username}, penalty_percent={penalty_percent}, "
+            f"refund_amount={refund_amount}"
+        )
         messages.success(request, f"رزرو کنسل شد. مبلغ {refund_amount} تومان به کیف پول شما بازگشت.")
         return redirect('tickets:reservation_list')

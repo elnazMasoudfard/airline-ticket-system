@@ -1,6 +1,10 @@
+import logging
+
 from django.db.models import Max
 
 from .models import Seat, SeatClass
+
+logger = logging.getLogger('flights')
 
 COLUMN_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F']
 
@@ -50,6 +54,11 @@ def generate_seats_for_flight(flight):
 
         Seat.objects.bulk_create(seats_to_create)
         created_total += len(seats_to_create)
-        next_row = row  # ردیف بعدی از همینجا برای کلاس بعدی ادامه پیدا می‌کند
+        next_row = row  # next row begins where this row finished
+
+    if created_total:
+        logger.info(f"{created_total} صندلی برای پرواز {flight.flight_number} ساخته شد")
+    if skipped:
+        logger.info(f"کلاس‌های صندلی زیر از قبل صندلی داشتند و رد شدند: {', '.join(skipped)}")
 
     return created_total, skipped

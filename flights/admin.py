@@ -1,9 +1,13 @@
+import logging
+
 from django.contrib import admin
 from django.contrib import messages
 from django.core.exceptions import ObjectDoesNotExist
 
 from .models import Airline, Airport, Flight, Route, Seat, SeatClass
 from .services import generate_seats_for_flight
+
+logger = logging.getLogger('flights')
 
 
 @admin.register(Airport)
@@ -50,6 +54,10 @@ def generate_seats(modeladmin, request, queryset):
         skipped_total += skipped
 
     if created_total:
+        logger.info(
+            f"ساخت خودکار صندلی از پنل ادمین توسط={request.user.username}: "
+            f"مجموع ساخته‌شده={created_total}"
+        )
         messages.success(request, f"{created_total} صندلی ساخته شد.")
     if skipped_total:
         messages.warning(
