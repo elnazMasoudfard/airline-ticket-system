@@ -5,25 +5,71 @@
 <h1 class="page-title">داشبورد مدیریت</h1>
 
 <div class="profile-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 32px;">
-  <div class="profile-card">
+  <a href="{% url 'dashboard:flight_manage_list' %}" class="profile-card stat-card-link">
     <span class="profile-card-label">کل پروازها</span>
     <span class="profile-card-value mono">{{ flight_count }}</span>
-  </div>
-  <div class="profile-card">
+  </a>
+  <a href="{% url 'dashboard:flight_manage_list' %}?filter=upcoming" class="profile-card stat-card-link">
     <span class="profile-card-label">پروازهای آینده</span>
     <span class="profile-card-value mono">{{ upcoming_flight_count }}</span>
-  </div>
-  <div class="profile-card">
+  </a>
+  <a href="{% url 'dashboard:reservation_manage_list' %}?filter=active" class="profile-card stat-card-link">
     <span class="profile-card-label">رزروهای فعال</span>
     <span class="profile-card-value mono">{{ active_reservation_count }}</span>
-  </div>
-  <div class="profile-card">
+  </a>
+  <a href="{% url 'dashboard:user_manage_list' %}" class="profile-card stat-card-link">
     <span class="profile-card-label">کل کاربران</span>
     <span class="profile-card-value mono">{{ user_count }}</span>
-  </div>
+  </a>
 </div>
 
-<div style="display: flex; gap: 12px;">
+<section class="finance-section">
+  <h2 style="font-size: 1.05rem; margin: 0 0 16px; color: var(--color-primary);">مدیریت مالی</h2>
+
+  <div class="profile-grid" style="grid-template-columns: repeat(3, 1fr); margin-bottom: 20px;">
+    <div class="profile-card">
+      <span class="profile-card-label">درآمد ناخالص از فروش بلیط</span>
+      <span class="profile-card-value mono">{{ total_gross|floatformat:0 }} تومان</span>
+    </div>
+    <div class="profile-card">
+      <span class="profile-card-label">مبلغ استردادشده (کنسلی‌ها)</span>
+      <span class="profile-card-value mono" style="color: var(--color-danger);">{{ total_refunded|floatformat:0 }} تومان</span>
+    </div>
+    <div class="profile-card">
+      <span class="profile-card-label">درآمد خالص</span>
+      <span class="profile-card-value mono" style="color: var(--color-success);">{{ total_net|floatformat:0 }} تومان</span>
+    </div>
+  </div>
+
+  <div class="dashboard-table-wrap">
+    <table class="dashboard-table">
+      <thead>
+        <tr>
+          <th class="mono-header">شماره پرواز</th>
+          <th>مسیر</th>
+          <th class="mono-header">درآمد ناخالص</th>
+          <th class="mono-header">استردادی</th>
+          <th class="mono-header">درآمد خالص</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for flight in flights_financials %}
+          <tr>
+            <td class="mono">{{ flight.flight_number }}</td>
+            <td>{{ flight.route.origin.city }} ← {{ flight.route.destination.city }}</td>
+            <td class="mono">{{ flight.gross_paid|floatformat:0 }}</td>
+            <td class="mono">{{ flight.total_refunded|floatformat:0 }}</td>
+            <td class="mono">{{ flight.net_revenue|floatformat:0 }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5">هنوز داده‌ی مالی‌ای ثبت نشده است.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div style="display: flex; gap: 12px; margin-top: 28px;">
   <a href="{% url 'dashboard:flight_manage_list' %}" class="btn btn-primary">مدیریت پروازها</a>
   <a href="{% url 'dashboard:flight_create' %}" class="btn btn-accent">ایجاد پرواز جدید</a>
   <a href="{% url 'admin:index' %}" class="btn btn-ghost">پنل ادمین جنگو</a>

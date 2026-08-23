@@ -1,0 +1,53 @@
+{% extends 'base.html' %}
+{% block title %}مدیریت کاربران{% endblock %}
+
+{% block content %}
+<h1 class="page-title">مدیریت کاربران</h1>
+
+<div class="dashboard-table-wrap">
+  <table class="dashboard-table">
+    <thead>
+      <tr>
+        <th>نام کاربری</th>
+        <th>ایمیل</th>
+        <th class="mono-header">موبایل</th>
+        <th class="mono-header">کیف پول</th>
+        <th>تاریخ عضویت</th>
+        <th>دسترسی</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+        <tr>
+          <td>{{ u.username }}</td>
+          <td>{{ u.email|default:"—" }}</td>
+          <td class="mono">{{ u.phone_number|default:"—" }}</td>
+          <td class="mono">{{ u.wallet_balance|floatformat:0 }} تومان</td>
+          <td>{{ u.date_joined|date:"Y/m/d" }}</td>
+          <td>
+            {% if u.is_staff %}
+              <span class="badge badge-success">مدیر</span>
+            {% else %}
+              <span class="badge badge-muted">کاربر عادی</span>
+            {% endif %}
+          </td>
+          <td>
+            <a href="/admin/accounts/customuser/{{ u.pk }}/change/" target="_blank" class="btn btn-ghost btn-sm">مشاهده</a>
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="7">کاربری ثبت نشده است.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if is_paginated %}
+  <nav class="pagination">
+    {% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}">قبلی</a>{% endif %}
+    <span>صفحه {{ page_obj.number }} از {{ page_obj.paginator.num_pages }}</span>
+    {% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}">بعدی</a>{% endif %}
+  </nav>
+{% endif %}
+{% endblock %}

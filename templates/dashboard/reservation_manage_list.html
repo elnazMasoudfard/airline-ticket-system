@@ -1,0 +1,62 @@
+{% extends 'base.html' %}
+{% block title %}مدیریت رزروها{% endblock %}
+
+{% block content %}
+<div class="dashboard-toolbar">
+  <h1 class="page-title" style="margin-bottom: 0;">
+    مدیریت رزروها {% if is_active_filter %}<span class="badge badge-muted">فقط فعال</span>{% endif %}
+  </h1>
+  {% if is_active_filter %}
+    <a href="{% url 'dashboard:reservation_manage_list' %}" class="btn btn-ghost btn-sm">نمایش همه (شامل کنسل‌شده)</a>
+  {% else %}
+    <a href="{% url 'dashboard:reservation_manage_list' %}?filter=active" class="btn btn-ghost btn-sm">فقط رزروهای فعال</a>
+  {% endif %}
+</div>
+
+<div class="dashboard-table-wrap">
+  <table class="dashboard-table">
+    <thead>
+      <tr>
+        <th class="mono-header">کد رزرو</th>
+        <th>کاربر</th>
+        <th class="mono-header">پرواز</th>
+        <th>مسیر</th>
+        <th class="mono-header">تعداد صندلی</th>
+        <th class="mono-header">مبلغ</th>
+        <th>وضعیت</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for reservation in reservations %}
+        <tr>
+          <td class="mono">{{ reservation.booking_reference }}</td>
+          <td>{{ reservation.user.username }}</td>
+          <td class="mono">{{ reservation.seat_class.flight.flight_number }}</td>
+          <td>{{ reservation.seat_class.flight.route.origin.city }} ← {{ reservation.seat_class.flight.route.destination.city }}</td>
+          <td class="mono">{{ reservation.seats_count }}</td>
+          <td class="mono">{{ reservation.total_paid_price|floatformat:0 }}</td>
+          <td>
+            <span class="badge {% if reservation.status == 'reserved' %}badge-success{% else %}badge-danger{% endif %}">
+              {{ reservation.get_status_display }}
+            </span>
+          </td>
+          <td>
+            <a href="/admin/tickets/reservation/{{ reservation.pk }}/change/" target="_blank" class="btn btn-ghost btn-sm">مشاهده</a>
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="8">رزروی ثبت نشده است.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if is_paginated %}
+  <nav class="pagination">
+    {% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}">قبلی</a>{% endif %}
+    <span>صفحه {{ page_obj.number }} از {{ page_obj.paginator.num_pages }}</span>
+    {% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}">بعدی</a>{% endif %}
+  </nav>
+{% endif %}
+{% endblock %}

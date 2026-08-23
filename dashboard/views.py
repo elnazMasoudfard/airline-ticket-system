@@ -1,8 +1,12 @@
+from decimal import Decimal
+
 from django.contrib import messages
 from django.db import transaction
+from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
+from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
-from django.views.generic import ListView, View
+from django.views.generic import DetailView, ListView, View
 
 from accounts.models import CustomUser
 from flights.models import Flight
@@ -14,9 +18,40 @@ from .mixins import StaffRequiredMixin
 
 
 class DashboardHomeView(StaffRequiredMixin, View):
-    """صفحه‌ی اصلی داشبورد با یک نمای کلی از وضعیت سیستم."""
+    """صفحه‌ی اصلی داشبورد با نمای کلی وضعیت سیستم و خلاصه‌ی مالی."""
 
     def get(self, request, *args, **kwargs):
+        money_field = DecimalField(max_digits=14, decimal_places=2)
+
+        flights_financials = (
+            Flight.objects
+            .select_related('route__origin', 'route__destination')
+            .annotate(
+                gross_paid=Coalesce(
+                    Sum('seat_classes__reservations__total_paid_price'), Decimal('0.00'),
+                    output_field=money_field,
+                ),
+                total_refunded=Coalesce(
+                    Sum('seat_classes__reservations__refund_amount'), Decimal('0.00'),
+                    output_field=money_field,
+                ),
+            )
+            .annotate(
+                net_revenue=ExpressionWrapper(
+                    F('gross_paid') - F('total_refunded'), output_field=money_field
+                )
+            )
+            .order_by('-departure_datetime')
+        )
+
+        reservation_totals = Reservation.objects.aggregate(
+            total_gross=Coalesce(Sum('total_paid_price'), Decimal('0.00'), output_field=money_field),
+            total_refunded=Coalesce(Sum('refund_amount'), Decimal('0.00'), output_field=money_field),
+        )
+        total_gross = reservation_totals['total_gross']
+        total_refunded = reservation_totals['total_refunded']
+        total_net = total_gross - total_refunded
+
         context = {
             'flight_count': Flight.objects.count(),
             'upcoming_flight_count': Flight.objects.filter(
@@ -27,23 +62,73 @@ class DashboardHomeView(StaffRequiredMixin, View):
                 status=Reservation.StatusChoices.RESERVED
             ).count(),
             'user_count': CustomUser.objects.count(),
+            'flights_financials': flights_financials,
+            'total_gross': total_gross,
+            'total_refunded': total_refunded,
+            'total_net': total_net,
         }
         return render(request, 'dashboard/home.html', context)
 
 
 class FlightManageListView(StaffRequiredMixin, ListView):
-    """لیست همه‌ی پروازها برای مدیریت (نه فقط پروازهای آینده)."""
+    """
+    لیست همه‌ی پروازها برای مدیریت — شامل پروازهای گذشته و آینده.
+    با ?filter=upcoming فقط پروازهای آینده و برنامه‌ریزی‌شده نمایش داده می‌شود.
+    """
     model = Flight
     template_name = 'dashboard/flight_manage_list.html'
     context_object_name = 'flights'
     paginate_by = 15
 
     def get_queryset(self):
+        queryset = (
+            Flight.objects
+            .select_related('route__origin', 'route__destination', 'airline')
+            .annotate(
+                active_reservation_count=Count(
+                    'seat_classes__reservations',
+                    filter=Q(seat_classes__reservations__status='reserved'),
+                    distinct=True,
+                )
+            )
+            .order_by('-departure_datetime')
+        )
+        if self.request.GET.get('filter') == 'upcoming':
+            queryset = queryset.filter(
+                status=Flight.StatusChoices.SCHEDULED,
+                departure_datetime__gt=timezone.now(),
+            )
+        return queryset
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['now'] = timezone.now()
+        context['is_upcoming_filter'] = self.request.GET.get('filter') == 'upcoming'
+        return context
+
+
+class FlightManageDetailView(StaffRequiredMixin, DetailView):
+    """جزئیات یک پرواز برای مدیر، شامل لیست کامل رزروهای آن (فعال و کنسل‌شده)."""
+    model = Flight
+    template_name = 'dashboard/flight_manage_detail.html'
+    context_object_name = 'flight'
+
+    def get_queryset(self):
         return (
             Flight.objects
             .select_related('route__origin', 'route__destination', 'airline')
-            .order_by('-departure_datetime')
+            .prefetch_related('seat_classes')
         )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['reservations'] = (
+            Reservation.objects
+            .filter(seat_class__flight=self.object)
+            .select_related('user', 'seat_class')
+            .order_by('-created_at')
+        )
+        return context
 
 
 class FlightCreateView(StaffRequiredMixin, View):
@@ -123,3 +208,44 @@ class GenerateSeatsView(StaffRequiredMixin, View):
             messages.info(request, "هنوز کلاس صندلی‌ای برای این پرواز ثبت نشده است.")
 
         return redirect('dashboard:flight_edit', pk=flight.pk)
+
+
+class ReservationManageListView(StaffRequiredMixin, ListView):
+    """
+    لیست همه‌ی رزروهای سیستم (نه فقط رزروهای یک کاربر خاص).
+    با ?filter=active فقط رزروهای فعال (کنسل‌نشده) نمایش داده می‌شود.
+    """
+    model = Reservation
+    template_name = 'dashboard/reservation_manage_list.html'
+    context_object_name = 'reservations'
+    paginate_by = 20
+
+    def get_queryset(self):
+        queryset = (
+            Reservation.objects
+            .select_related(
+                'user',
+                'seat_class__flight__route__origin',
+                'seat_class__flight__route__destination',
+            )
+            .order_by('-created_at')
+        )
+        if self.request.GET.get('filter') == 'active':
+            queryset = queryset.filter(status=Reservation.StatusChoices.RESERVED)
+        return queryset
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['is_active_filter'] = self.request.GET.get('filter') == 'active'
+        return context
+
+
+class UserManageListView(StaffRequiredMixin, ListView):
+    """لیست همه‌ی کاربران ثبت‌نام‌شده برای مدیر."""
+    model = CustomUser
+    template_name = 'dashboard/user_manage_list.html'
+    context_object_name = 'users'
+    paginate_by = 20
+
+    def get_queryset(self):
+        return CustomUser.objects.order_by('-date_joined')

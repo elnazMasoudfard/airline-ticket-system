@@ -567,7 +567,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   * { transition: none !important; animation: none !important; }
 }
 
-/* ===== Confirmation modal (append to main.css) ===== */
+/* ===== Confirmation modal  ===== */
 .modal-overlay {
   display: none;
   position: fixed;
@@ -609,7 +609,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   margin-top: 22px;
 }
 
-/* ===== Dashboard table (append to main.css) ===== */
+/* ===== Dashboard table ===== */
 .dashboard-table-wrap {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -638,6 +638,15 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   padding: 14px 16px;
   border-bottom: 1px solid var(--color-border);
   white-space: nowrap;
+  text-align: right;
+}
+
+.dashboard-table td.mono {
+  text-align: center;
+}
+
+.dashboard-table th.mono-header {
+  text-align: center;
 }
 
 .dashboard-table tr:last-child td { border-bottom: none; }
@@ -702,7 +711,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   .form-grid { grid-template-columns: 1fr; }
 }
 
-/* ===== Seat map (append to main.css) ===== */
+/*  Seat map  */
 .seat-map {
   display: flex;
   flex-direction: column;
@@ -787,3 +796,15 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .legend-available { background: var(--color-surface); border: 1.5px solid var(--color-border); }
 .legend-selected { background: var(--color-accent); }
 .legend-taken { background: var(--color-border); }
+
+/* ===== Clickable dashboard stat cards  */
+.stat-card-link {
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+}
+
+.stat-card-link:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-card);
+  border-color: var(--color-accent);
+}

@@ -1,0 +1,85 @@
+{% extends 'base.html' %}
+{% block title %}جزئیات پرواز {{ flight.flight_number }}{% endblock %}
+
+{% block content %}
+<a href="{% url 'dashboard:flight_manage_list' %}" class="back-link">→ بازگشت به لیست پروازها</a>
+
+<div class="dashboard-toolbar">
+  <h1 class="page-title" style="margin-bottom: 0;">پرواز {{ flight.flight_number }}</h1>
+  <a href="{% url 'dashboard:flight_edit' flight.pk %}" class="btn btn-primary btn-sm">ویرایش پرواز</a>
+</div>
+
+<div class="profile-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 28px;">
+  <div class="profile-card">
+    <span class="profile-card-label">مسیر</span>
+    <span class="profile-card-value">{{ flight.route.origin.city }} ← {{ flight.route.destination.city }}</span>
+  </div>
+  <div class="profile-card">
+    <span class="profile-card-label">تاریخ حرکت</span>
+    <span class="profile-card-value mono">{{ flight.departure_datetime|date:"Y/m/d H:i" }}</span>
+  </div>
+  <div class="profile-card">
+    <span class="profile-card-label">ایرلاین</span>
+    <span class="profile-card-value">{{ flight.airline.name }}</span>
+  </div>
+  <div class="profile-card">
+    <span class="profile-card-label">وضعیت پرواز</span>
+    <span class="badge {% if flight.status == 'cancelled' %}badge-danger{% elif flight.status == 'completed' %}badge-muted{% else %}badge-success{% endif %}">
+      {{ flight.get_status_display }}
+    </span>
+  </div>
+</div>
+
+<h2 style="font-size: 1rem; margin-bottom: 12px;">کلاس‌های صندلی</h2>
+<div class="dashboard-table-wrap" style="margin-bottom: 28px;">
+  <table class="dashboard-table">
+    <thead>
+      <tr><th>کلاس</th><th class="mono-header">ظرفیت کل</th><th class="mono-header">صندلی باقی‌مانده</th><th class="mono-header">قیمت نهایی</th></tr>
+    </thead>
+    <tbody>
+      {% for seat_class in flight.seat_classes.all %}
+        <tr>
+          <td>{{ seat_class.get_class_type_display }}</td>
+          <td class="mono">{{ seat_class.capacity }}</td>
+          <td class="mono">{{ seat_class.available_seats }}</td>
+          <td class="mono">{{ seat_class.final_price|floatformat:0 }} تومان</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4">کلاس صندلی‌ای ثبت نشده است.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2 style="font-size: 1rem; margin-bottom: 12px;">رزروهای این پرواز ({{ reservations|length }})</h2>
+<div class="dashboard-table-wrap">
+  <table class="dashboard-table">
+    <thead>
+      <tr>
+        <th class="mono-header">کد رزرو</th><th>کاربر</th><th>کلاس</th><th class="mono-header">تعداد صندلی</th><th class="mono-header">مبلغ</th><th>وضعیت</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for reservation in reservations %}
+        <tr>
+          <td class="mono">{{ reservation.booking_reference }}</td>
+          <td>{{ reservation.user.username }}</td>
+          <td>{{ reservation.seat_class.get_class_type_display }}</td>
+          <td class="mono">{{ reservation.seats_count }}</td>
+          <td class="mono">{{ reservation.total_paid_price|floatformat:0 }}</td>
+          <td>
+            <span class="badge {% if reservation.status == 'reserved' %}badge-success{% else %}badge-danger{% endif %}">
+              {{ reservation.get_status_display }}
+            </span>
+          </td>
+          <td>
+            <a href="/admin/tickets/reservation/{{ reservation.pk }}/change/" target="_blank" class="btn btn-ghost btn-sm">مشاهده</a>
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="7">هنوز رزروی برای این پرواز ثبت نشده است.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
