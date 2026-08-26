@@ -1,4 +1,3 @@
-from django.utils import timezone
 from django.views.generic import DetailView, ListView
 
 from .forms import FlightSearchForm
@@ -16,15 +15,7 @@ class FlightListView(ListView):
     paginate_by = 10
 
     def get_queryset(self):
-        queryset = (
-            Flight.objects
-            .filter(
-                status=Flight.StatusChoices.SCHEDULED,
-                departure_datetime__gt=timezone.now(),
-            )
-            .select_related('route__origin', 'route__destination', 'airline')
-            .prefetch_related('seat_classes')
-        )
+        queryset = Flight.objects.upcoming().with_route_info().prefetch_related('seat_classes')
 
         form = FlightSearchForm(self.request.GET or None)
         if form.is_valid():
@@ -32,12 +23,9 @@ class FlightListView(ListView):
             destination = form.cleaned_data.get('destination')
             departure_date = form.cleaned_data.get('departure_date')
 
-            if origin:
-                queryset = queryset.filter(route__origin=origin)
-            if destination:
-                queryset = queryset.filter(route__destination=destination)
+            queryset = queryset.by_route(origin, destination)
             if departure_date:
-                queryset = queryset.filter(departure_datetime__date=departure_date)
+                queryset = queryset.on_date(departure_date)
 
         return queryset
 
@@ -54,8 +42,4 @@ class FlightDetailView(DetailView):
     context_object_name = 'flight'
 
     def get_queryset(self):
-        return (
-            Flight.objects
-            .select_related('route__origin', 'route__destination', 'airline')
-            .prefetch_related('seat_classes')
-        )
+        return Flight.objects.with_route_info().prefetch_related('seat_classes')

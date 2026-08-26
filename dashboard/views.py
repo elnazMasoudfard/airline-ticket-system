@@ -57,13 +57,8 @@ class DashboardHomeView(StaffRequiredMixin, View):
 
         context = {
             'flight_count': Flight.objects.count(),
-            'upcoming_flight_count': Flight.objects.filter(
-                status=Flight.StatusChoices.SCHEDULED,
-                departure_datetime__gt=timezone.now(),
-            ).count(),
-            'active_reservation_count': Reservation.objects.filter(
-                status=Reservation.StatusChoices.RESERVED
-            ).count(),
+            'upcoming_flight_count': Flight.objects.upcoming().count(),
+            'active_reservation_count': Reservation.objects.active().count(),
             'user_count': CustomUser.objects.count(),
             'flights_financials': flights_financials,
             'total_gross': total_gross,
@@ -86,7 +81,7 @@ class FlightManageListView(StaffRequiredMixin, ListView):
     def get_queryset(self):
         queryset = (
             Flight.objects
-            .select_related('route__origin', 'route__destination', 'airline')
+            .with_route_info()
             .annotate(
                 active_reservation_count=Count(
                     'seat_classes__reservations',
@@ -97,10 +92,7 @@ class FlightManageListView(StaffRequiredMixin, ListView):
             .order_by('-departure_datetime')
         )
         if self.request.GET.get('filter') == 'upcoming':
-            queryset = queryset.filter(
-                status=Flight.StatusChoices.SCHEDULED,
-                departure_datetime__gt=timezone.now(),
-            )
+            queryset = queryset.upcoming()
         return queryset
 
     def get_context_data(self, **kwargs):
@@ -232,15 +224,12 @@ class ReservationManageListView(StaffRequiredMixin, ListView):
     def get_queryset(self):
         queryset = (
             Reservation.objects
-            .select_related(
-                'user',
-                'seat_class__flight__route__origin',
-                'seat_class__flight__route__destination',
-            )
+            .select_related('user')
+            .with_flight_info()
             .order_by('-created_at')
         )
         if self.request.GET.get('filter') == 'active':
-            queryset = queryset.filter(status=Reservation.StatusChoices.RESERVED)
+            queryset = queryset.active()
         return queryset
 
     def get_context_data(self, **kwargs):

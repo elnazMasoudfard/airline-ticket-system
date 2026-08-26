@@ -28,12 +28,8 @@ class ReservationListView(LoginRequiredMixin, ListView):
     def get_queryset(self):
         return (
             Reservation.objects
-            .filter(user=self.request.user)
-            .select_related(
-                'seat_class__flight__route__origin',
-                'seat_class__flight__route__destination',
-                'seat_class__flight__airline',
-            )
+            .for_user(self.request.user)
+            .with_flight_info()
             .prefetch_related('passengers', 'reservation_seats__seat')
         )
 
@@ -49,7 +45,7 @@ class ReservationDetailView(LoginRequiredMixin, DetailView):
     def get_queryset(self):
         return (
             Reservation.objects
-            .filter(user=self.request.user)
+            .for_user(self.request.user)
             .prefetch_related('passengers', 'reservation_seats__seat')
         )
 

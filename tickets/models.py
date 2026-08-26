@@ -8,6 +8,31 @@ from core.models import TimeStampedModel
 from flights.models import Seat, SeatClass
 
 
+class ReservationQuerySet(models.QuerySet):
+    def active(self):
+        """فقط رزروهای فعال (کنسل‌نشده)."""
+        return self.filter(status=Reservation.StatusChoices.RESERVED)
+
+    def cancelled(self):
+        """فقط رزروهای کنسل‌شده."""
+        return self.filter(status=Reservation.StatusChoices.CANCELLED)
+
+    def for_user(self, user):
+        """رزروهای یک کاربر مشخص."""
+        return self.filter(user=user)
+
+    def with_flight_info(self):
+        """select_related استاندارد برای نمایش اطلاعات پرواز بدون N+1 query."""
+        return self.select_related(
+            'seat_class__flight__route__origin',
+            'seat_class__flight__route__destination',
+            'seat_class__flight__airline',
+        )
+
+
+ReservationManager = models.Manager.from_queryset(ReservationQuerySet)
+
+
 class Reservation(TimeStampedModel):
     class StatusChoices(models.TextChoices):
         RESERVED = 'reserved', 'رزرو شده (قطعی)'
@@ -54,6 +79,8 @@ class Reservation(TimeStampedModel):
         verbose_name="وضعیت رزرو"
     )
     cancelled_at = models.DateTimeField(null=True, blank=True, verbose_name="تاریخ و ساعت کنسلی")
+
+    objects = ReservationManager()
 
     class Meta:
         verbose_name = "رزرو"

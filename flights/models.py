@@ -3,6 +3,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models import F
+from django.utils import timezone
 
 from core.models import TimeStampedModel
 
@@ -62,6 +63,35 @@ class Route(TimeStampedModel):
         return f"{self.origin.city} به {self.destination.city}"
 
 
+class FlightQuerySet(models.QuerySet):
+    def upcoming(self):
+        """فقط پروازهای برنامه‌ریزی‌شده‌ای که هنوز پرواز نکرده‌اند."""
+        return self.filter(
+            status=Flight.StatusChoices.SCHEDULED,
+            departure_datetime__gt=timezone.now(),
+        )
+
+    def by_route(self, origin=None, destination=None):
+        """فیلتر بر اساس مبدا و/یا مقصد (هر کدام اختیاری)."""
+        queryset = self
+        if origin:
+            queryset = queryset.filter(route__origin=origin)
+        if destination:
+            queryset = queryset.filter(route__destination=destination)
+        return queryset
+
+    def on_date(self, date):
+        """فقط پروازهایی که در یک تاریخ مشخص حرکت می‌کنند."""
+        return self.filter(departure_datetime__date=date)
+
+    def with_route_info(self):
+        """select_related استاندارد برای نمایش مسیر/ایرلاین بدون N+1 query."""
+        return self.select_related('route__origin', 'route__destination', 'airline')
+
+
+FlightManager = models.Manager.from_queryset(FlightQuerySet)
+
+
 class Flight(TimeStampedModel):
     class StatusChoices(models.TextChoices):
         SCHEDULED = 'scheduled', 'برنامه‌ریزی شده'
@@ -108,6 +138,8 @@ class Flight(TimeStampedModel):
         verbose_name="وضعیت پرواز"
     )
 
+    objects = FlightManager()
+
     class Meta:
         verbose_name = "پرواز"
         verbose_name_plural = "پروازها"
@@ -131,6 +163,15 @@ class Flight(TimeStampedModel):
         return sum(seat.available_seats for seat in self.seat_classes.all())
 
 
+class SeatClassQuerySet(models.QuerySet):
+    def available(self):
+        """فقط کلاس‌های صندلی‌ای که هنوز حداقل یک صندلی خالی دارند."""
+        return self.filter(available_seats__gt=0)
+
+
+SeatClassManager = models.Manager.from_queryset(SeatClassQuerySet)
+
+
 class SeatClass(TimeStampedModel):
     class ClassTypeChoices(models.TextChoices):
         ECONOMY = 'economy', 'اکونومی'
@@ -148,6 +189,8 @@ class SeatClass(TimeStampedModel):
     )
     capacity = models.PositiveIntegerField(verbose_name="ظرفیت کل")
     available_seats = models.PositiveIntegerField(verbose_name="صندلی‌های موجود")
+
+    objects = SeatClassManager()
 
     class Meta:
         verbose_name = "کلاس پروازی صندلی"
