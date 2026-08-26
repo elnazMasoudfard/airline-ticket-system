@@ -132,15 +132,22 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+# ==============================
+# Email Configuration
+# ==============================
+# Default: Console Backend (no actual email is sent; the text is simply printed to the terminal)
+# For a demo using real email: Configure these 4 values ​​in .env (no need to modify this file):
+#   EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
 
-# Email
-# https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
-
-MAILERS = {
-    'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
-    },
-}
+# Email Configuration (Gmail SMTP over SSL)
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 465
+EMAIL_USE_SSL = True
+EMAIL_USE_TLS = False
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'

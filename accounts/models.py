@@ -1,9 +1,13 @@
+import secrets
+from datetime import timedelta
 from decimal import Decimal
 
+from django.conf import settings
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.core.validators import MinValueValidator, RegexValidator
 from django.db import models
 from django.db.models import F
+from django.utils import timezone
 
 
 class CustomUserManager(BaseUserManager):
@@ -69,7 +73,7 @@ class CustomUser(AbstractUser):
         return f"{self.username} ({self.get_full_name() or 'بدون نام'})"
 
     def deposit(self, amount: Decimal) -> None:
-        """شارژ کیف پول به‌صورت اتمیک."""
+        """ charging wallet atomicly"""
         if amount <= 0:
             raise ValueError("مبلغ شارژ باید بیشتر از صفر باشد.")
         CustomUser.objects.filter(pk=self.pk).update(
@@ -79,8 +83,8 @@ class CustomUser(AbstractUser):
 
     def withdraw(self, amount: Decimal) -> None:
         """
-        کسر از کیف پول به‌صورت اتمیک.
-        از موجودی منفی و race condition (دو تراکنش هم‌زمان) جلوگیری می‌کند.
+        Atomic wallet deduction.
+        Prevents negative balances and race conditions (simultaneous transactions).
         """
         if amount <= 0:
             raise ValueError("مبلغ برداشت باید بیشتر از صفر باشد.")
@@ -90,3 +94,31 @@ class CustomUser(AbstractUser):
         if not updated:
             raise ValueError("موجودی کیف پول کافی نیست.")
         self.refresh_from_db(fields=['wallet_balance'])
+
+
+class EmailVerificationToken(models.Model):
+    """unique token for confirming email"""
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='email_tokens',
+        verbose_name="کاربر"
+    )
+    token = models.CharField(max_length=64, unique=True, editable=False, verbose_name="توکن")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="زمان ساخت")
+    is_used = models.BooleanField(default=False, verbose_name="استفاده شده")
+
+    class Meta:
+        verbose_name = "توکن تایید ایمیل"
+        verbose_name_plural = "توکن‌های تایید ایمیل"
+
+    def save(self, *args, **kwargs):
+        if not self.token:
+            self.token = secrets.token_urlsafe(32)
+        super().save(*args, **kwargs)
+
+    def is_valid(self) -> bool:
+        """token will be valid for 24 hours"""
+        if self.is_used:
+            return False
+        return timezone.now() <= self.created_at + timedelta(hours=24)
