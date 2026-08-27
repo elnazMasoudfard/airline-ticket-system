@@ -6,6 +6,17 @@
 
 <h1 class="page-title">{% if is_edit %}ویرایش پرواز {{ flight.flight_number }}{% else %}ایجاد پرواز جدید{% endif %}</h1>
 
+{% if is_edit %}
+  <form action="{% url 'dashboard:generate_seats' flight.pk %}" method="post" class="form-section">
+    {% csrf_token %}
+    <h2>ساخت خودکار صندلی‌ها</h2>
+    <p class="field-hint" style="margin-bottom: 14px;">
+      برای کلاس‌هایی که هنوز صندلی ندارند، ردیف‌ها را پیوسته می‌سازد (اکونومی، بعد بیزینس، بعد فرست کلاس).
+    </p>
+    <button type="submit" class="btn btn-accent btn-sm">ساخت خودکار صندلی‌ها برای این پرواز</button>
+  </form>
+{% endif %}
+
 <form method="post" novalidate>
   {% csrf_token %}
 
@@ -25,18 +36,6 @@
 
   <div class="form-section">
     <h2>کلاس‌های صندلی</h2>
-
-    {% if is_edit %}
-      <form action="{% url 'dashboard:generate_seats' flight.pk %}" method="post" style="margin-bottom: 18px;">
-        {% csrf_token %}
-        <button type="submit" class="btn btn-accent btn-sm">
-          ساخت خودکار صندلی‌ها برای این پرواز
-        </button>
-        <span class="field-hint" style="display:block; margin-top:6px;">
-          برای کلاس‌هایی که هنوز صندلی ندارند، ردیف‌ها را پیوسته می‌سازد (اکونومی، بعد بیزینس، بعد فرست کلاس).
-        </span>
-      </form>
-    {% endif %}
 
     {{ formset.management_form }}
     {% for pform in formset %}

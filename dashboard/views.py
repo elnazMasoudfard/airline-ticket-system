@@ -4,6 +4,7 @@ from decimal import Decimal
 from django.contrib import messages
 from django.db import transaction
 from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
+from django.db.models.deletion import ProtectedError
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -172,9 +173,24 @@ class FlightEditView(StaffRequiredMixin, View):
         formset = SeatClassFormSet(request.POST, instance=flight)
 
         if form.is_valid() and formset.is_valid():
-            with transaction.atomic():
-                form.save()
-                formset.save()
+            try:
+                with transaction.atomic():
+                    form.save()
+                    formset.save()
+            except ProtectedError:
+                logger.warning(
+                    f"تلاش ناموفق برای حذف کلاس صندلی دارای تاریخچه توسط={request.user.username}, "
+                    f"flight={flight.flight_number}"
+                )
+                messages.error(
+                    request,
+                    "یکی از کلاس‌های صندلی به‌خاطر داشتن تاریخچه‌ی رزرو (حتی کنسل‌شده) قابل حذف نیست. "
+                    "برای حذف اجباری همراه با پاک‌شدن تاریخچه، از اکشن مخصوص در پنل ادمین جنگو استفاده کنید."
+                )
+                return render(request, self.template_name, {
+                    'form': form, 'formset': formset, 'is_edit': True, 'flight': flight,
+                })
+
             logger.info(f"پرواز ویرایش شد توسط مدیر={request.user.username}: {flight.flight_number}")
             messages.success(request, "پرواز با موفقیت به‌روزرسانی شد.")
             return redirect('dashboard:flight_manage_list')

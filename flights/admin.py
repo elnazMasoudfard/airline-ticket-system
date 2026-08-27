@@ -66,11 +66,46 @@ def generate_seats(modeladmin, request, queryset):
         )
 
 
+@admin.action(description="⚠️ حذف اجباری کلاس صندلی (به همراه تاریخچه‌ی رزروهای کنسل‌شده‌اش)")
+def force_delete_seat_class(modeladmin, request, queryset):
+    from tickets.models import Reservation
+
+    deleted_count = 0
+    blocked = []
+
+    for seat_class in queryset:
+        active_count = Reservation.objects.filter(
+            seat_class=seat_class, status=Reservation.StatusChoices.RESERVED
+        ).count()
+
+        if active_count > 0:
+            blocked.append(f"{seat_class} ({active_count} رزرو فعال)")
+            continue
+
+        label = str(seat_class)
+        # رزروهای کنسل‌شده‌ی تاریخی مرتبط را حذف می‌کنیم تا PROTECT دیگر مانع نشود
+        Reservation.objects.filter(seat_class=seat_class).delete()
+        seat_class.delete()
+
+        logger.warning(
+            f"حذف اجباری کلاس صندلی توسط={request.user.username}: {label}"
+        )
+        deleted_count += 1
+
+    if deleted_count:
+        messages.success(request, f"{deleted_count} کلاس صندلی (همراه با تاریخچه‌اش) حذف شد.")
+    if blocked:
+        messages.error(
+            request,
+            "این کلاس‌ها رزرو فعال دارند و حذف نشدند: " + "، ".join(blocked)
+        )
+
+
 @admin.register(SeatClass)
 class SeatClassAdmin(admin.ModelAdmin):
     list_display = ['flight', 'class_type', 'capacity', 'available_seats']
     list_filter = ['class_type']
-    actions = [generate_seats]
+    actions = [generate_seats, force_delete_seat_class]
 
 
 @admin.register(Seat)
