@@ -57,3 +57,17 @@ class DepositForm(forms.Form):
         widget=forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'مثلاً 500000'}),
         label="مبلغ شارژ (تومان)"
     )
+
+
+class PhoneVerificationForm(forms.Form):
+    code = forms.CharField(
+        max_length=6,
+        min_length=6,
+        widget=forms.TextInput(attrs={
+            'class': 'form-control mono',
+            'placeholder': '------',
+            'inputmode': 'numeric',
+            'autocomplete': 'one-time-code',
+        }),
+        label="کد تایید ۶ رقمی"
+    )

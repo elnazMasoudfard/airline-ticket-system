@@ -16,17 +16,28 @@
   <div class="profile-card">
     <span class="profile-card-label">شماره موبایل</span>
     <span class="profile-card-value">{{ profile_user.phone_number|default:"ثبت نشده" }}</span>
-    <span class="badge {% if profile_user.phone_verified %}badge-success{% else %}badge-muted{% endif %}">
-      {% if profile_user.phone_verified %}تایید شده{% else %}تایید نشده{% endif %}
-    </span>
+    {% if profile_user.phone_verified %}
+      <span class="badge badge-success">تایید شده</span>
+    {% elif profile_user.phone_number %}
+      <a href="{% url 'accounts:verify_phone' %}" class="badge badge-action badge-muted">تایید نشده — کلیک برای تایید</a>
+    {% else %}
+      <span class="badge badge-muted">تایید نشده</span>
+    {% endif %}
   </div>
 
   <div class="profile-card">
     <span class="profile-card-label">ایمیل</span>
     <span class="profile-card-value">{{ profile_user.email|default:"ثبت نشده" }}</span>
-    <span class="badge {% if profile_user.email_verified %}badge-success{% else %}badge-muted{% endif %}">
-      {% if profile_user.email_verified %}تایید شده{% else %}تایید نشده{% endif %}
-    </span>
+    {% if profile_user.email_verified %}
+      <span class="badge badge-success">تایید شده</span>
+    {% elif profile_user.email %}
+      <form action="{% url 'accounts:resend_verification_email' %}" method="post" class="inline-form">
+        {% csrf_token %}
+        <button type="submit" class="badge badge-action badge-muted">تایید نشده — کلیک برای ارسال لینک</button>
+      </form>
+    {% else %}
+      <span class="badge badge-muted">تایید نشده</span>
+    {% endif %}
   </div>
 </section>
 

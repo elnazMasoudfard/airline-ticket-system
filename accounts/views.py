@@ -1,27 +1,27 @@
 import logging
+import traceback
 
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.mail import send_mail
-from django.shortcuts import redirect
+from django.shortcuts import redirect, render
 from django.urls import reverse, reverse_lazy
+from django.utils import timezone
 from django.views.generic import DetailView, FormView, View
 
-from .forms import DepositForm, LoginForm, RegistrationForm
-from .models import CustomUser, EmailVerificationToken
+from .forms import DepositForm, LoginForm, PhoneVerificationForm, RegistrationForm
+from .models import CustomUser, EmailVerificationToken, PhoneVerificationCode
 
 logger = logging.getLogger('accounts')
 security_logger = logging.getLogger('accounts.security')
 
 
-import traceback
-
 def send_verification_email(request, user):
-    """ایجاد توکن و ارسال ایمیل فعال‌سازی به کاربر"""
+    """ایجاد توکن و ارسال ایمیل فعال‌سازی به کاربر."""
     if not user.email:
-        print(f"[EMAIL DEBUG] کاربر {user.username} ایمیل ندارد!")
+        logger.warning(f"تلاش برای ارسال ایمیل تایید بدون ایمیل ثبت‌شده: user={user.username}")
         return
 
     token_obj = EmailVerificationToken.objects.create(user=user)
@@ -35,29 +35,36 @@ def send_verification_email(request, user):
         f"{verify_url}\n\n"
         f"اگر این درخواست از سمت شما نبوده، این ایمیل را نادیده بگیرید."
     )
-    
-    sender = settings.EMAIL_HOST_USER
-    print(f"[EMAIL DEBUG] در حال ارسال ایمیل از {sender} به {user.email}...")
 
     try:
         send_mail(
             subject=subject,
             message=message,
-            from_email=sender,
+            from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[user.email],
             fail_silently=False,
         )
-        print(f"[EMAIL DEBUG] ایمیل با موفقیت ارسال شد.")
+        logger.info(f"ایمیل تایید ارسال شد: user={user.username}, email={user.email}")
     except Exception as e:
-        print("=" * 40)
-        print("[EMAIL ERROR TRACEBACK]:")
-        traceback.print_exc()
-        print("=" * 40)
-        logger.error(f"خطا در ارسال ایمیل تایید به {user.email}: {e}")
-        
-        
+        logger.error(f"خطا در ارسال ایمیل تایید به {user.email}: {e}\n{traceback.format_exc()}")
+
+
+def send_verification_sms(user):
+    """
+    ایجاد کد تایید ۶ رقمی برای شماره موبایل کاربر.
+    چون درگاه پیامک واقعی متصل نیست، ارسال آن شبیه‌سازی‌شده و فقط در
+    کنسول/لاگ سرور چاپ می‌شود (دقیقاً مثل رفتار EMAIL_BACKEND=console).
+    """
+    # کدهای قبلی و استفاده‌نشده را باطل می‌کنیم تا فقط جدیدترین کد معتبر باشد
+    PhoneVerificationCode.objects.filter(user=user, used_at__isnull=True).update(used_at=timezone.now())
+
+    verification = PhoneVerificationCode.objects.create(user=user)
+    print(f"[SMS DEBUG] کد تایید برای {user.phone_number}: {verification.code}")
+    logger.info(f"کد تایید پیامکی (شبیه‌سازی‌شده) ساخته شد: user={user.username}, phone={user.phone_number}")
+
+
 class RegisterView(FormView):
-    """New user registration, generation and sending of an email verification token, and automatic login."""
+    """ثبت‌نام کاربر جدید، ارسال ایمیل تایید، و ورود خودکار."""
     template_name = 'accounts/register.html'
     form_class = RegistrationForm
     success_url = reverse_lazy('flights:flight_list')
@@ -76,7 +83,8 @@ class RegisterView(FormView):
 
 
 class VerifyEmailView(View):
-    """ Token verification and user email confirmation activation """
+    """اعتبارسنجی توکن و فعال‌سازی تایید ایمیل کاربر."""
+
     def get(self, request, token, *args, **kwargs):
         try:
             token_obj = EmailVerificationToken.objects.select_related('user').get(token=token)
@@ -84,7 +92,7 @@ class VerifyEmailView(View):
             messages.error(request, "لینک تایید نامعتبر است.")
             return redirect('flights:flight_list')
 
-        if not token_obj.is_valid():
+        if token_obj.is_used or token_obj.is_expired:
             messages.error(request, "لینک تایید منقضی شده یا قبلاً استفاده شده است.")
             return redirect('flights:flight_list')
 
@@ -92,16 +100,84 @@ class VerifyEmailView(View):
         user.email_verified = True
         user.save(update_fields=['email_verified'])
 
-        token_obj.is_used = True
-        token_obj.save(update_fields=['is_used'])
+        token_obj.used_at = timezone.now()
+        token_obj.save(update_fields=['used_at'])
 
         logger.info(f"ایمیل کاربر {user.username} با موفقیت تایید شد.")
         messages.success(request, "ایمیل شما با موفقیت تایید شد.")
         return redirect('accounts:profile')
 
 
+class ResendVerificationEmailView(LoginRequiredMixin, View):
+    """ارسال دوباره‌ی لینک تایید ایمیل (مثلاً وقتی کاربر لینک اول را گم کرده یا منقضی شده)."""
+
+    def post(self, request, *args, **kwargs):
+        if request.user.email_verified:
+            messages.info(request, "ایمیل شما قبلاً تایید شده است.")
+        elif not request.user.email:
+            messages.error(request, "برای دریافت لینک تایید، ابتدا باید ایمیل خود را ثبت کنید.")
+        else:
+            send_verification_email(request, request.user)
+            messages.success(request, "لینک تایید جدید به ایمیل شما ارسال شد.")
+        return redirect('accounts:profile')
+
+
+class RequestPhoneVerificationView(LoginRequiredMixin, View):
+    """
+    صفحه‌ی تایید شماره موبایل: یک دکمه برای ارسال کد (شبیه‌سازی‌شده)
+    و یک فرم برای وارد کردن کد دریافتی.
+    """
+    template_name = 'accounts/verify_phone.html'
+
+    def get(self, request, *args, **kwargs):
+        return render(request, self.template_name, {'form': PhoneVerificationForm(), 'code_sent': False})
+
+    def post(self, request, *args, **kwargs):
+        if request.user.phone_verified:
+            messages.info(request, "شماره موبایل شما قبلاً تایید شده است.")
+            return redirect('accounts:profile')
+
+        if 'send_code' in request.POST:
+            if not request.user.phone_number:
+                messages.error(request, "ابتدا باید شماره موبایل خود را ثبت کنید.")
+                return redirect('accounts:profile')
+
+            send_verification_sms(request.user)
+            messages.info(
+                request,
+                "کد تایید ارسال شد. (چون به درگاه پیامک واقعی متصل نیستیم، کد در کنسول سرور چاپ می‌شود.)"
+            )
+            return render(request, self.template_name, {'form': PhoneVerificationForm(), 'code_sent': True})
+
+        form = PhoneVerificationForm(request.POST)
+        if form.is_valid():
+            code = form.cleaned_data['code']
+            verification = (
+                PhoneVerificationCode.objects
+                .filter(user=request.user, code=code, used_at__isnull=True)
+                .order_by('-created_at')
+                .first()
+            )
+
+            if verification is None:
+                security_logger.warning(f"کد تایید پیامکی اشتباه: user={request.user.username}")
+                messages.error(request, "کد وارد‌شده اشتباه است.")
+            elif verification.is_expired:
+                messages.error(request, "کد منقضی شده است. دوباره درخواست بدهید.")
+            else:
+                verification.used_at = timezone.now()
+                verification.save(update_fields=['used_at'])
+                request.user.phone_verified = True
+                request.user.save(update_fields=['phone_verified'])
+                logger.info(f"شماره موبایل تایید شد: user={request.user.username}")
+                messages.success(request, "شماره موبایل شما با موفقیت تایید شد.")
+                return redirect('accounts:profile')
+
+        return render(request, self.template_name, {'form': form, 'code_sent': True})
+
+
 class LoginView(FormView):
-    """User login with username and password."""
+    """ورود کاربر با نام کاربری و رمز عبور."""
     template_name = 'accounts/login.html'
     form_class = LoginForm
     success_url = reverse_lazy('flights:flight_list')
@@ -131,7 +207,7 @@ class LogoutView(LoginRequiredMixin, View):
 
 
 class ProfileView(LoginRequiredMixin, DetailView):
-    """ The user profile includes the wallet balance and account information. """
+    """پروفایل کاربر شامل موجودی کیف پول و اطلاعات حساب."""
     model = CustomUser
     template_name = 'accounts/profile.html'
     context_object_name = 'profile_user'
@@ -141,7 +217,7 @@ class ProfileView(LoginRequiredMixin, DetailView):
 
 
 class DepositView(LoginRequiredMixin, FormView):
-    """ Topping up the simulated wallet. """
+    """شارژ کیف پول (شبیه‌سازی‌شده، بدون اتصال به درگاه پرداخت واقعی)."""
     template_name = 'accounts/deposit.html'
     form_class = DepositForm
     success_url = reverse_lazy('accounts:profile')

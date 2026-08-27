@@ -813,3 +813,17 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .boarding-pass-details > div {
   text-align: right;
 }
+
+/* ===== Clickable badge (verification prompts) ===== */
+.badge-action {
+  border: none;
+  font-family: inherit;
+  font-size: .72rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.badge-action:hover {
+  opacity: .85;
+}
