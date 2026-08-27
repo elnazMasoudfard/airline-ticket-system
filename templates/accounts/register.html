@@ -10,10 +10,21 @@
       <div class="field">
         <label for="{{ field.id_for_label }}">{{ field.label }}</label>
         {{ field }}
-        {% if field.help_text %}<p class="field-hint">{{ field.help_text }}</p>{% endif %}
+        
+        {% if field.help_text and field.name != 'password1' and field.name != 'password2' %}
+          <p class="field-hint">{{ field.help_text }}</p>
+        {% endif %}
         {% for error in field.errors %}<p class="field-error">{{ error }}</p>{% endfor %}
       </div>
     {% endfor %}
+
+    
+    {% if form.password1.help_text %}
+      <div class="field-hint" style="direction: ltr; text-align: left; margin-bottom: 1rem;">
+        {{ form.password1.help_text|safe }}
+      </div>
+    {% endif %}
+
     {% for error in form.non_field_errors %}<p class="field-error">{{ error }}</p>{% endfor %}
     <button type="submit" class="btn btn-primary btn-block">ثبت‌نام</button>
   </form>
