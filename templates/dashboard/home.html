@@ -55,7 +55,7 @@
       <tbody>
         {% for flight in flights_financials %}
           <tr>
-            <td class="mono">{{ flight.flight_number }}</td>
+            <td class="mono"><a href="{% url 'dashboard:flight_manage_detail' flight.pk %}">{{ flight.flight_number }}</a></td>
             <td>{{ flight.route.origin.city }} ← {{ flight.route.destination.city }}</td>
             <td class="mono">{{ flight.gross_paid|floatformat:0 }}</td>
             <td class="mono">{{ flight.total_refunded|floatformat:0 }}</td>
