@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load badges %}
 {% block title %}رزروهای من{% endblock %}
 
 {% block content %}
@@ -22,14 +23,14 @@
         </div>
         <div class="ticket-divider" aria-hidden="true"></div>
         <div class="ticket-side">
-          <span class="badge {% if reservation.status == 'reserved' %}badge-success{% else %}badge-danger{% endif %}">
-            {{ reservation.get_status_display }}
-          </span>
+          {% reservation_status_badge reservation %}
           <span class="mono">{{ reservation.total_paid_price|floatformat:0 }} تومان</span>
         </div>
       </a>
     {% endfor %}
   </div>
+
+  {% include 'partials/pagination.html' %}
 {% else %}
   <div class="empty-state">
     <p>هنوز رزروی ثبت نکرده‌ای.</p>

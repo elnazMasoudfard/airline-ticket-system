@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load badges %}
 {% block title %}رزرو {{ reservation.booking_reference }}{% endblock %}
 
 {% block content %}
@@ -7,9 +8,7 @@
 <section class="boarding-pass">
   <div class="boarding-pass-header">
     <span class="mono boarding-ref">{{ reservation.booking_reference }}</span>
-    <span class="badge {% if reservation.status == 'reserved' %}badge-success{% else %}badge-danger{% endif %}">
-      {{ reservation.get_status_display }}
-    </span>
+    {% reservation_status_badge reservation %}
   </div>
 
   <div class="boarding-pass-route">
