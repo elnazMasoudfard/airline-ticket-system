@@ -1,8 +1,10 @@
 import logging
+from datetime import timedelta
 
 from django.db.models import Max
+from django.utils import timezone
 
-from .models import Seat, SeatClass
+from .models import Flight, Seat, SeatClass
 
 logger = logging.getLogger('flights')
 
@@ -54,7 +56,7 @@ def generate_seats_for_flight(flight):
 
         Seat.objects.bulk_create(seats_to_create)
         created_total += len(seats_to_create)
-        next_row = row  # next row begins where this row finished
+        next_row = row  # ردیف بعدی از همینجا برای کلاس بعدی ادامه پیدا می‌کند
 
     if created_total:
         logger.info(f"{created_total} صندلی برای پرواز {flight.flight_number} ساخته شد")
@@ -62,3 +64,34 @@ def generate_seats_for_flight(flight):
         logger.info(f"کلاس‌های صندلی زیر از قبل صندلی داشتند و رد شدند: {', '.join(skipped)}")
 
     return created_total, skipped
+
+
+def sync_flight_statuses():
+    """
+    وضعیت پروازها را بر اساس زمان واقعی به‌روزرسانی می‌کند:
+    - از ۱ ساعت قبل از حرکت تا لحظه‌ی رسیدن: در حال انجام (ACTIVE)
+    - بعد از زمان رسیدن: انجام‌شده (COMPLETED)
+
+    هرگز پروازهای «لغو شده» را دست‌کاری نمی‌کند؛ تصمیم دستی مدیر همیشه اولویت دارد.
+    این تابع به‌صورت سبک (bulk update، بدون بارگذاری کامل شیء) اجرا می‌شود، پس
+    صدا زدنش در ابتدای هر view که لیست پرواز نشان می‌دهد بی‌خطر و ارزان است.
+    """
+    now = timezone.now()
+
+    activated_count = Flight.objects.filter(
+        status=Flight.StatusChoices.SCHEDULED,
+        departure_datetime__lte=now + timedelta(hours=1),
+        arrival_datetime__gt=now,
+    ).update(status=Flight.StatusChoices.ACTIVE)
+
+    completed_count = Flight.objects.filter(
+        status__in=[Flight.StatusChoices.SCHEDULED, Flight.StatusChoices.ACTIVE],
+        arrival_datetime__lte=now,
+    ).update(status=Flight.StatusChoices.COMPLETED)
+
+    if activated_count:
+        logger.info(f"{activated_count} پرواز به وضعیت «در حال انجام» تغییر یافت")
+    if completed_count:
+        logger.info(f"{completed_count} پرواز به وضعیت «انجام شده» تغییر یافت")
+
+    return activated_count, completed_count
