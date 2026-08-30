@@ -2,9 +2,10 @@
 {% block title %}پروفایل من{% endblock %}
 
 {% block content %}
-<section class="profile-header">
-  <h1 class="page-title">سلام {{ profile_user.get_full_name|default:profile_user.username }} 👋</h1>
-</section>
+<div class="dashboard-toolbar">
+  <h1 class="page-title" style="margin-bottom: 0;">سلام {{ profile_user.get_full_name|default:profile_user.username }} 👋</h1>
+  <a href="{% url 'accounts:profile_edit' %}" class="btn btn-ghost btn-sm">ویرایش اطلاعات</a>
+</div>
 
 <section class="profile-grid">
   <div class="profile-card">

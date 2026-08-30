@@ -5,14 +5,21 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.core.mail import message as django_mail_message
 from django.core.mail import send_mail
 from django.shortcuts import redirect, render
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
-from django.views.generic import DetailView, FormView, View
+from django.views.generic import DetailView, FormView, UpdateView, View
 
-from .forms import DepositForm, LoginForm, PhoneVerificationForm, RegistrationForm
+from .forms import DepositForm, LoginForm, PhoneVerificationForm, ProfileEditForm, RegistrationForm
 from .models import CustomUser, EmailVerificationToken, PhoneVerificationCode
+
+# جنگو برای ایمیل‌های UTF-8 با خطوط کوتاه، مستقل از تنظیمات عمومی email.charset،
+# از یک شیء Charset داخلی خودش (utf8_charset) با body_encoding=None استفاده می‌کند
+# که در عمل یعنی BASE64. با تغییر مستقیم همین مقدار به QP (quoted-printable)،
+# متن ASCII (مثل لینک تایید) در کنسول/لاگ خوانا باقی می‌ماند.
+django_mail_message.utf8_charset.body_encoding = django_mail_message.Charset.QP
 
 logger = logging.getLogger('accounts')
 security_logger = logging.getLogger('accounts.security')
@@ -214,6 +221,45 @@ class ProfileView(LoginRequiredMixin, DetailView):
 
     def get_object(self, queryset=None):
         return self.request.user
+
+
+class ProfileEditView(LoginRequiredMixin, UpdateView):
+    """
+    ویرایش اطلاعات پروفایل (نام، نام خانوادگی، ایمیل، موبایل).
+    اگر ایمیل یا موبایل تغییر کند، وضعیت تاییدش به‌صورت خودکار به
+    «تایید نشده» برمی‌گردد، چون تاییدیه‌ی قبلی مربوط به مقدار قدیمی بوده است.
+    """
+    model = CustomUser
+    form_class = ProfileEditForm
+    template_name = 'accounts/profile_edit.html'
+    success_url = reverse_lazy('accounts:profile')
+
+    def get_object(self, queryset=None):
+        return self.request.user
+
+    def form_valid(self, form):
+        email_changed = 'email' in form.changed_data
+        phone_changed = 'phone_number' in form.changed_data
+
+        response = super().form_valid(form)
+        user = self.object
+
+        if email_changed:
+            user.email_verified = False
+            user.save(update_fields=['email_verified'])
+            logger.info(f"ایمیل کاربر تغییر کرد و نیاز به تایید مجدد دارد: user={user.username}")
+            if user.email:
+                send_verification_email(self.request, user)
+                messages.info(self.request, "چون ایمیل خود را تغییر دادید، لینک تایید جدید برایتان ارسال شد.")
+
+        if phone_changed:
+            user.phone_verified = False
+            user.save(update_fields=['phone_verified'])
+            messages.info(self.request, "چون شماره موبایل خود را تغییر دادید، باید دوباره تاییدش کنید.")
+
+        logger.info(f"پروفایل کاربر ویرایش شد: user={user.username}")
+        messages.success(self.request, "اطلاعات پروفایل با موفقیت به‌روزرسانی شد.")
+        return response
 
 
 class DepositView(LoginRequiredMixin, FormView):
