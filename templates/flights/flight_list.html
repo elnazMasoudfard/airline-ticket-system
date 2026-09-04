@@ -4,7 +4,7 @@
 {% block content %}
 <section class="search-panel">
   <h1 class="page-title">به کجا پرواز می‌کنی؟</h1>
-  <form method="get" class="search-form">
+  <form method="get" class="search-form" id="searchForm">
     <div class="field">
       <label for="{{ search_form.origin.id_for_label }}">مبدا</label>
       {{ search_form.origin }}
@@ -34,46 +34,63 @@
   {% endif %}
 </section>
 
-<section class="results">
-  <div class="results-header">
-    <h2>پروازهای پیش رو</h2>
-    <span class="results-count">{{ flights|length }} پرواز</span>
-  </div>
-
-  {% if flights %}
-    <div class="ticket-list">
-      {% for flight in flights %}
-        <a href="{% url 'flights:flight_detail' flight.pk %}" class="ticket-card">
-          <div class="ticket-main">
-            <span class="ticket-airline">{{ flight.airline.name }}</span>
-            <div class="ticket-route">
-              <span class="ticket-city">{{ flight.route.origin.city }}</span>
-              <span class="ticket-route-line"><span class="plane-icon">✈</span></span>
-              <span class="ticket-city">{{ flight.route.destination.city }}</span>
-            </div>
-            <div class="ticket-meta">
-              <span class="mono">{{ flight.flight_number }}</span>
-              <span>{{ flight.departure_datetime|date:"Y/m/d - H:i" }}</span>
-            </div>
-          </div>
-          <div class="ticket-divider" aria-hidden="true"></div>
-          <div class="ticket-side">
-            <div class="ticket-price">
-              <span class="mono">{{ flight.base_price|floatformat:0 }}</span>
-              <small>تومان از هر نفر</small>
-            </div>
-            <span class="btn btn-primary btn-sm">مشاهده و رزرو</span>
-          </div>
-        </a>
-      {% endfor %}
-    </div>
-
-    {% include 'partials/pagination.html' %}
-  {% else %}
-    <div class="empty-state">
-      <p>پروازی با این مشخصات پیدا نشد.</p>
-      <p class="empty-hint">مبدا، مقصد یا تاریخ دیگری را امتحان کنید.</p>
-    </div>
-  {% endif %}
+<section class="results" id="searchResults">
+  {% include 'flights/_flight_results.html' %}
 </section>
+
+<script>
+(function () {
+  var form = document.getElementById('searchForm');
+  var resultsContainer = document.getElementById('searchResults');
+
+  function fetchResults(queryString) {
+    resultsContainer.classList.add('results-loading');
+
+    fetch(window.location.pathname + '?' + queryString, {
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+      .then(function (response) { return response.text(); })
+      .then(function (html) {
+        resultsContainer.innerHTML = html;
+        resultsContainer.classList.remove('results-loading');
+        window.history.pushState({}, '', window.location.pathname + '?' + queryString);
+      })
+      .catch(function () {
+        // اگر Ajax به هر دلیلی fail شد، به رفتار عادی (رفرش کامل) برمی‌گردیم
+        window.location.search = queryString;
+      });
+  }
+
+  function currentFormQuery() {
+    return new URLSearchParams(new FormData(form)).toString();
+  }
+
+  // ارسال فرم بدون رفرش کامل صفحه
+  form.addEventListener('submit', function (event) {
+    event.preventDefault();
+    fetchResults(currentFormQuery());
+  });
+
+  // جستجوی زنده: با تغییر هر فیلد، خودکار نتایج آپدیت می‌شوند
+  form.querySelectorAll('select, input').forEach(function (field) {
+    field.addEventListener('change', function () {
+      fetchResults(currentFormQuery());
+    });
+  });
+
+  // لینک‌های صفحه‌بندی (قبلی/بعدی) هم بدون رفرش کامل کار کنند
+  resultsContainer.addEventListener('click', function (event) {
+    var link = event.target.closest('.pagination a');
+    if (!link) return;
+    event.preventDefault();
+    var url = new URL(link.href, window.location.origin);
+    fetchResults(url.search.replace(/^\?/, ''));
+  });
+
+  // پشتیبانی از دکمه‌ی back/forward مرورگر
+  window.addEventListener('popstate', function () {
+    fetchResults(window.location.search.replace(/^\?/, ''));
+  });
+})();
+</script>
 {% endblock %}

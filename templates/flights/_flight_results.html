@@ -1,0 +1,40 @@
+<div class="results-header">
+  <h2>پروازهای پیش رو</h2>
+  <span class="results-count">{{ flights|length }} پرواز</span>
+</div>
+
+{% if flights %}
+  <div class="ticket-list">
+    {% for flight in flights %}
+      <a href="{% url 'flights:flight_detail' flight.pk %}" class="ticket-card">
+        <div class="ticket-main">
+          <span class="ticket-airline">{{ flight.airline.name }}</span>
+          <div class="ticket-route">
+            <span class="ticket-city">{{ flight.route.origin.city }}</span>
+            <span class="ticket-route-line"><span class="plane-icon">✈</span></span>
+            <span class="ticket-city">{{ flight.route.destination.city }}</span>
+          </div>
+          <div class="ticket-meta">
+            <span class="mono">{{ flight.flight_number }}</span>
+            <span>{{ flight.departure_datetime|date:"Y/m/d - H:i" }}</span>
+          </div>
+        </div>
+        <div class="ticket-divider" aria-hidden="true"></div>
+        <div class="ticket-side">
+          <div class="ticket-price">
+            <span class="mono">{{ flight.base_price|floatformat:0 }}</span>
+            <small>تومان از هر نفر</small>
+          </div>
+          <span class="btn btn-primary btn-sm">مشاهده و رزرو</span>
+        </div>
+      </a>
+    {% endfor %}
+  </div>
+
+  {% include 'partials/pagination.html' %}
+{% else %}
+  <div class="empty-state">
+    <p>پروازی با این مشخصات پیدا نشد.</p>
+    <p class="empty-hint">مبدا، مقصد یا تاریخ دیگری را امتحان کنید.</p>
+  </div>
+{% endif %}
