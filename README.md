@@ -2,14 +2,14 @@
 
 A full-featured flight ticket booking platform built with **Django** and **PostgreSQL**, featuring atomic seat reservation, wallet-based payments, a staff management dashboard, and a custom right-to-left (RTL) interface designed for Persian-speaking users.
 
-This project was built as a university web programming course project, with an emphasis on production-grade practices: normalized data modeling, race-condition-safe booking logic, structured logging, and a clean, maintainable Django architecture.
+This project was built as a university web programming course project, with an emphasis on production-grade practices: normalized data modeling, race-condition-safe booking logic, structured logging, automated tests, and a clean, maintainable Django architecture.
 
 ---
 
 ## ✨ Key Features
 
 ### Booking & Payments
-- **Flight search & browsing** — search by origin, destination, and date, with paginated results
+- **Flight search & browsing** — search by origin, destination, and date, with **live Ajax filtering and pagination** (no full page reload; falls back gracefully to normal form submission if JS is unavailable)
 - **Multi-class seating** — Economy / Business / First class per flight, each with its own price multiplier and capacity
 - **Specific seat selection** — users pick exact seats from a visual seat map; group bookings are validated to ensure seats are adjacent in the same row
 - **Atomic seat reservation** — uses `select_for_update()` and database-level `F()` expressions to prevent overbooking or double-booking under concurrent requests
@@ -18,6 +18,7 @@ This project was built as a university web programming course project, with an e
 
 ### Accounts & Security
 - **Custom user model** — extends Django's `AbstractUser` with a wallet balance and phone/email verification flags
+- **Profile editing** — users can update their name, email, and phone number; changing email or phone automatically resets its verification status and (for email) triggers a fresh verification link
 - **Email verification** — a one-time link (24h expiry) sent via a configurable email backend (console backend by default; switches to real SMTP via `.env` for a live demo)
 - **Simulated phone (SMS) verification** — a 6-digit one-time code flow; since no real SMS gateway is connected, the code is logged instead of texted
 - **Structured logging** — rotating file handlers (`general.log`, `errors.log`, `security.log`) with a dedicated logger per app, covering auth events, wallet transactions, booking lifecycle, and staff actions. Django admin actions (add/change/delete) are also captured via a signal on `LogEntry`.
@@ -31,6 +32,7 @@ This project was built as a university web programming course project, with an e
 - **Automatic flight status transitions** — flights move `Scheduled → Active` one hour before departure, and `→ Completed` once arrival time has passed, via a lightweight cache-throttled middleware (no external cron/Celery required). Manually cancelled flights are never touched by this logic.
 
 ### Engineering Practices
+- **Automated test suite** — unit and integration tests (`python manage.py test`) covering wallet edge cases, database constraints, atomic seat reserve/release, seat generation, and the full booking flow through views (adjacent-seat validation, wallet debiting, cancellation refunds)
 - **Custom model managers/querysets** (`Flight.objects.upcoming()`, `Reservation.objects.active()`, etc.) centralize query logic instead of repeating filters across views
 - **DRY templates** — shared partials (`pagination.html`) and custom template tags (`{% flight_status_badge %}`, `{% reservation_status_badge %}`) eliminate duplicated markup across pages
 - **Custom RTL UI** — hand-built Persian interface (no frontend framework) with a boarding-pass-inspired visual identity
@@ -41,7 +43,7 @@ This project was built as a university web programming course project, with an e
 |---|---|
 | Backend | Django (Class-Based Views) |
 | Database | PostgreSQL |
-| Frontend | Django Templates, vanilla CSS (RTL, custom design system) |
+| Frontend | Django Templates, vanilla CSS (RTL, custom design system), vanilla JS (Ajax) |
 | Fonts | Vazirmatn (UI text), JetBrains Mono (flight/booking codes) |
 | Config | Environment variables via `.env` (`python-decouple`) |
 
@@ -118,6 +120,7 @@ DEBUG=True
 ```sql
 CREATE USER airline_user WITH PASSWORD 'your_password';
 CREATE DATABASE airline_db OWNER airline_user;
+ALTER USER airline_user CREATEDB;  -- required for running the test suite
 ```
 
 ### Run migrations & start the server
@@ -129,6 +132,12 @@ python manage.py runserver
 ```
 
 Visit `http://127.0.0.1:8000/` for the app, `http://127.0.0.1:8000/admin/` for the Django admin, and `http://127.0.0.1:8000/dashboard/` for the staff dashboard (requires a staff user).
+
+### Running tests
+
+```bash
+python manage.py test
+```
 
 ### Generating seat maps for test flights
 
@@ -147,20 +156,23 @@ python manage.py recalculate_seat_availability # reconcile seat counts if data e
 FinalProject/
 ├── accounts/
 │   ├── models.py      # CustomUser, EmailVerificationToken, PhoneVerificationCode
-│   ├── forms.py        # Registration, login, deposit, phone verification forms
-│   ├── views.py        # Auth flow, wallet deposit, email/phone verification
+│   ├── forms.py        # Registration, login, profile edit, deposit, phone verification forms
+│   ├── views.py        # Auth flow, profile editing, wallet deposit, email/phone verification
+│   ├── tests.py        # Wallet & user-manager unit tests
 │   └── urls.py
 ├── flights/
 │   ├── models.py        # Airport, Airline, Route, Flight, SeatClass, Seat
 │   ├── forms.py          # Flight search form
-│   ├── views.py          # Flight listing & detail views
+│   ├── views.py          # Flight listing (Ajax-aware) & detail views
 │   ├── services.py       # Seat generation, flight status sync
 │   ├── middleware.py     # Automatic flight status transitions
+│   ├── tests.py          # Constraint & seat reservation/generation tests
 │   └── urls.py
 ├── tickets/
 │   ├── models.py         # Reservation, Passenger, ReservationSeat
 │   ├── forms.py           # Booking & passenger forms
 │   ├── views.py           # Booking workflow, seat selection, cancellation
+│   ├── tests.py           # End-to-end booking flow tests
 │   └── urls.py
 ├── dashboard/
 │   ├── views.py            # Staff-only flight/reservation/user management, financial overview
@@ -177,13 +189,12 @@ FinalProject/
 
 ## 🗺️ Roadmap
 
-Core requirements are complete. A few optional enhancements remain:
+Core requirements and all optional bonus items (custom managers, email/SMS verification, template optimization, automated tests, Ajax) are complete. What remains is polish and real-world integration:
 
-- [ ] Ajax-based interactions (e.g., seat map or search without a full page reload)
-- [ ] Automated test suite (unit tests for booking concurrency and wallet logic)
-- [ ] Real payment gateway integration for wallet top-ups
+- [ ] Mobile-responsive pass — hamburger nav for small screens, responsive dashboard tables, touch-friendly seat map
+- [ ] Real payment gateway integration for wallet top-ups (e.g., ZarinPal sandbox)
 - [ ] Real SMS gateway integration (currently simulated via logging)
-- [ ] Deployment (Docker + Railway/Render)
+- [ ] Deployment (Docker + a hosting platform)
 
 ## 📄 License
 
