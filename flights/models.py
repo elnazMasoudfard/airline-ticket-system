@@ -52,10 +52,14 @@ class Route(TimeStampedModel):
         verbose_name = "مسیر پروازی"
         verbose_name_plural = "مسیرهای پروازی"
         constraints = [
-            models.UniqueConstraint(fields=['origin', 'destination'], name='unique_route_pair'),
+            models.UniqueConstraint(
+                fields=['origin', 'destination'], name='unique_route_pair',
+                violation_error_message="این مسیر (مبدا و مقصد) قبلاً ثبت شده است."
+            ),
             models.CheckConstraint(
                 condition=~models.Q(origin=models.F('destination')),
-                name='prevent_self_route'
+                name='prevent_self_route',
+                violation_error_message="مبدا و مقصد نمی‌توانند یکسان باشند."
             )
         ]
 
@@ -65,14 +69,14 @@ class Route(TimeStampedModel):
 
 class FlightQuerySet(models.QuerySet):
     def upcoming(self):
-        """فقط پروازهای برنامه‌ریزی‌شده‌ای که هنوز پرواز نکرده‌اند."""
+        """Only scheduled flights that have not yet departed."""
         return self.filter(
             status=Flight.StatusChoices.SCHEDULED,
             departure_datetime__gt=timezone.now(),
         )
 
     def by_route(self, origin=None, destination=None):
-        """فیلتر بر اساس مبدا و/یا مقصد (هر کدام اختیاری)."""
+        """Filter by origin and/or destination (each optional)."""
         queryset = self
         if origin:
             queryset = queryset.filter(route__origin=origin)
@@ -81,11 +85,12 @@ class FlightQuerySet(models.QuerySet):
         return queryset
 
     def on_date(self, date):
-        """فقط پروازهایی که در یک تاریخ مشخص حرکت می‌کنند."""
+        """Only flights departing on a specific date."""
         return self.filter(departure_datetime__date=date)
 
     def with_route_info(self):
-        """select_related استاندارد برای نمایش مسیر/ایرلاین بدون N+1 query."""
+        """`select_related` is the standard approach for displaying routes
+        or airlines without triggering N+1 queries."""
         return self.select_related('route__origin', 'route__destination', 'airline')
 
 
@@ -151,7 +156,8 @@ class Flight(TimeStampedModel):
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(arrival_datetime__gt=models.F('departure_datetime')),
-                name='arrival_after_departure'
+                name='arrival_after_departure',
+                violation_error_message="زمان رسیدن باید بعد از زمان حرکت باشد."
             )
         ]
 
@@ -165,7 +171,7 @@ class Flight(TimeStampedModel):
 
 class SeatClassQuerySet(models.QuerySet):
     def available(self):
-        """فقط کلاس‌های صندلی‌ای که هنوز حداقل یک صندلی خالی دارند."""
+        """Only those seating classes that still have at least one empty seat."""
         return self.filter(available_seats__gt=0)
 
 
@@ -196,10 +202,14 @@ class SeatClass(TimeStampedModel):
         verbose_name = "کلاس پروازی صندلی"
         verbose_name_plural = "کلاس‌های پروازی صندلی"
         constraints = [
-            models.UniqueConstraint(fields=['flight', 'class_type'], name='unique_flight_seat_class'),
+            models.UniqueConstraint(
+                fields=['flight', 'class_type'], name='unique_flight_seat_class',
+                violation_error_message="این کلاس صندلی قبلاً برای این پرواز تعریف شده است."
+            ),
             models.CheckConstraint(
                 condition=models.Q(available_seats__lte=models.F('capacity')),
-                name='available_seats_lte_capacity'
+                name='available_seats_lte_capacity',
+                violation_error_message="صندلی‌های موجود نمی‌تواند بیشتر از ظرفیت کل باشد."
             )
         ]
 
@@ -214,33 +224,35 @@ class SeatClass(TimeStampedModel):
 
     def reserve_seats(self, count: int) -> None:
         """
-        به‌صورت اتمیک تعداد مشخصی صندلی رزرو می‌کند (فقط شمارنده‌ی کلی).
-        برای رزرو صندلی‌های مشخص از Seat.reserve_specific_seats استفاده کنید.
+        atomically reserves a specific number of seats (only the total count).
+        Use `Seat.reserve_specific_seats` to reserve specific seats.
         """
         if count < 1:
             raise ValueError("تعداد صندلی باید حداقل ۱ باشد.")
+        # Note: Since queryset.update() is used here (rather than instance.save()),
+        # auto_now does not trigger automatically; therefore, we set updated_at manually.
         updated = SeatClass.objects.filter(
             pk=self.pk, available_seats__gte=count
-        ).update(available_seats=F('available_seats') - count)
+        ).update(available_seats=F('available_seats') - count, updated_at=timezone.now())
         if not updated:
             raise ValueError("ظرفیت کافی برای این کلاس پروازی وجود ندارد.")
-        self.refresh_from_db(fields=['available_seats'])
+        self.refresh_from_db(fields=['available_seats', 'updated_at'])
 
     def release_seats(self, count: int) -> None:
-        """صندلی‌های آزادشده (مثلاً بعد از کنسلی رزرو) را به‌صورت اتمیک برمی‌گرداند."""
+        """It atomically returns the released seats (e.g., following a reservation cancellation)."""
         if count < 1:
             raise ValueError("تعداد صندلی باید حداقل ۱ باشد.")
         SeatClass.objects.filter(pk=self.pk).update(
-            available_seats=F('available_seats') + count
+            available_seats=F('available_seats') + count, updated_at=timezone.now()
         )
-        self.refresh_from_db(fields=['available_seats'])
+        self.refresh_from_db(fields=['available_seats', 'updated_at'])
 
 
 class Seat(TimeStampedModel):
     """
-    یک صندلی مشخص در یک کلاس پروازی خاص (مثلاً ردیف ۱۲، ستون C).
-    این مدل امکان انتخاب صندلی مشخص توسط کاربر و تضمین کنار هم بودن
-    صندلی‌ها برای رزروهای گروهی را فراهم می‌کند.
+    A specific seat in a particular flight class (e.g., row 12, seat C).
+    This model allows users to select specific seats and guarantees adjacent seating
+    for group bookings.
     """
     seat_class = models.ForeignKey(
         SeatClass, on_delete=models.CASCADE, related_name='seats', verbose_name="کلاس صندلی"
