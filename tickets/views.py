@@ -19,7 +19,7 @@ logger = logging.getLogger('tickets')
 
 
 class ReservationListView(LoginRequiredMixin, ListView):
-    """لیست رزروهای خود کاربر (نه همه‌ی رزروهای سیستم)."""
+    """List of the user's reservations (not all system reservations)."""
     model = Reservation
     template_name = 'tickets/reservation_list.html'
     context_object_name = 'reservations'
@@ -35,7 +35,7 @@ class ReservationListView(LoginRequiredMixin, ListView):
 
 
 class ReservationDetailView(LoginRequiredMixin, DetailView):
-    """جزئیات یک رزرو. کاربر فقط می‌تواند رزروهای خودش را ببیند."""
+    """Reservation details. Users can only view their own reservations."""
     model = Reservation
     template_name = 'tickets/reservation_detail.html'
     context_object_name = 'reservation'
@@ -52,9 +52,9 @@ class ReservationDetailView(LoginRequiredMixin, DetailView):
 
 class ReservationCreateView(LoginRequiredMixin, View):
     """
-    مرحله‌ی اول رزرو: انتخاب تعداد صندلی برای یک کلاس پروازی مشخص.
-    خود رزرو اینجا ساخته نمی‌شود؛ فقط بعد از تایید موجودی کیف پول،
-    کاربر به صفحه‌ی انتخاب صندلی مشخص هدایت می‌شود.
+    First booking step: Selecting the number of seats for a specific flight class.
+    The actual booking is not created at this stage; only after the wallet balance is verified
+    is the user redirected to the specific seat selection page.
     """
     template_name = 'tickets/reservation_create.html'
 
@@ -98,10 +98,10 @@ class ReservationCreateView(LoginRequiredMixin, View):
 
 class SeatSelectionView(LoginRequiredMixin, View):
     """
-    مرحله‌ی دوم رزرو: انتخاب صندلی‌های مشخص از روی نقشه‌ی صندلی.
-    اگر بیش از ۱ صندلی انتخاب شود، باید در یک ردیف و کنار هم باشند.
-    در صورت موفقیت: صندلی‌ها به‌صورت اتمیک قفل می‌شوند، رزرو ساخته می‌شود
-    و مبلغ از کیف پول کسر می‌شود.
+    Booking step two: Selecting specific seats from the seating map.
+    If more than one seat is selected, they must be in the same row and adjacent to each other.
+    Upon success: The seats are locked atomically, the booking is created,
+    and the amount is deducted from the wallet.
     """
     template_name = 'tickets/seat_selection.html'
 
@@ -156,7 +156,7 @@ class SeatSelectionView(LoginRequiredMixin, View):
 
         try:
             with transaction.atomic():
-                # قفل کردن ردیف‌های انتخاب‌شده تا از رزرو هم‌زمان توسط دو کاربر جلوگیری شود
+                # Locking selected rows to prevent simultaneous booking by two users
                 locked_seats = list(
                     Seat.objects.select_for_update()
                     .filter(id__in=selected_ids, seat_class=seat_class, is_available=True)
@@ -188,9 +188,11 @@ class SeatSelectionView(LoginRequiredMixin, View):
                         messages.error(request, "صندلی‌های انتخابی کنار هم نیستند. لطفاً صندلی‌های پیوسته انتخاب کنید.")
                         return render(request, self.template_name, context)
 
-                Seat.objects.filter(id__in=[s.id for s in locked_seats]).update(is_available=False)
+                Seat.objects.filter(id__in=[s.id for s in locked_seats]).update(
+                    is_available=False, updated_at=timezone.now()
+                )
                 SeatClass.objects.filter(pk=seat_class.pk).update(
-                    available_seats=F('available_seats') - seats_count
+                    available_seats=F('available_seats') - seats_count, updated_at=timezone.now()
                 )
 
                 reservation = Reservation.objects.create(
@@ -225,7 +227,7 @@ class SeatSelectionView(LoginRequiredMixin, View):
 
 
 class AddPassengersView(LoginRequiredMixin, View):
-    """مرحله‌ی سوم: دریافت اطلاعات مسافران به تعداد seats_count."""
+    """Step 3: Collect passenger information for `seats_count` passengers."""
     template_name = 'tickets/add_passengers.html'
 
     def get_reservation(self):
@@ -263,9 +265,8 @@ class AddPassengersView(LoginRequiredMixin, View):
 
 
 class ReservationCancelView(LoginRequiredMixin, View):
-    """
-    کنسل کردن یک رزرو: آزادسازی صندلی‌های مشخص، برگرداندن شمارنده‌ی
-    ظرفیت کلاس صندلی، محاسبه‌ی جریمه‌ی کنسلی و واریز مبلغ استرداد.
+    """Canceling a reservation: releasing specific seats, updating the seat class capacity counter,
+    calculating the cancellation fee, and processing the refund.
     """
 
     def post(self, request, *args, **kwargs):
@@ -286,16 +287,19 @@ class ReservationCancelView(LoginRequiredMixin, View):
             seat_ids = list(
                 reservation.reservation_seats.values_list('seat_id', flat=True)
             )
-            Seat.objects.filter(id__in=seat_ids).update(is_available=True)
+            # Note: .update() bypasses auto_now, so we set updated_at manually.
+            Seat.objects.filter(id__in=seat_ids).update(is_available=True, updated_at=timezone.now())
 
             SeatClass.objects.filter(pk=reservation.seat_class_id).update(
-                available_seats=F('available_seats') + reservation.seats_count
+                available_seats=F('available_seats') + reservation.seats_count,
+                updated_at=timezone.now(),
             )
 
             reservation.status = Reservation.StatusChoices.CANCELLED
             reservation.cancelled_at = timezone.now()
             reservation.refund_amount = refund_amount
-            reservation.save(update_fields=['status', 'cancelled_at', 'refund_amount'])
+            # 'updated_at' must be explicitly included in update_fields, otherwise it won't be saved.
+            reservation.save(update_fields=['status', 'cancelled_at', 'refund_amount', 'updated_at'])
 
             request.user.deposit(refund_amount)
 
