@@ -41,7 +41,7 @@ class RegistrationForm(UserCreationForm):
 class LoginForm(forms.Form):
     username = forms.CharField(
         widget=forms.TextInput(attrs={'class': 'form-control', 'autofocus': True}),
-        label="نام کاربری"
+        label="نام کاربری یا ایمیل"
     )
     password = forms.CharField(
         widget=forms.PasswordInput(attrs={'class': 'form-control'}),
