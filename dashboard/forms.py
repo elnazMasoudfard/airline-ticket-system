@@ -30,7 +30,7 @@ class FlightForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # برای اینکه فرمت datetime-local موقع ویرایش هم درست نمایش داده شود
+        # To ensure the datetime-local format displays correctly during editing as well
         self.fields['departure_datetime'].input_formats = ['%Y-%m-%dT%H:%M']
         self.fields['arrival_datetime'].input_formats = ['%Y-%m-%dT%H:%M']
 
@@ -53,5 +53,6 @@ SeatClassFormSet = inlineformset_factory(
     form=SeatClassForm,
     extra=3,
     max_num=3,
+    validate_max=True,
     can_delete=True,
 )
