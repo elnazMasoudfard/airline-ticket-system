@@ -2,6 +2,7 @@ import logging
 from decimal import Decimal
 
 from django.contrib import messages
+from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
 from django.db.models.deletion import ProtectedError
@@ -12,7 +13,7 @@ from django.views.generic import DetailView, ListView, View
 
 from accounts.models import CustomUser
 from flights.models import Flight
-from flights.services import generate_seats_for_flight
+from flights.services import generate_seats_for_flight, sync_flight_statuses
 from tickets.models import Reservation
 
 from .forms import FlightForm, SeatClassFormSet
@@ -22,9 +23,11 @@ logger = logging.getLogger('dashboard')
 
 
 class DashboardHomeView(StaffRequiredMixin, View):
-    """صفحه‌ی اصلی داشبورد با نمای کلی وضعیت سیستم و خلاصه‌ی مالی."""
+    """Main dashboard page with an overview of system status and a financial summary."""
 
     def get(self, request, *args, **kwargs):
+        sync_flight_statuses()
+
         money_field = DecimalField(max_digits=14, decimal_places=2)
 
         flights_financials = (
@@ -56,12 +59,19 @@ class DashboardHomeView(StaffRequiredMixin, View):
         total_refunded = reservation_totals['total_refunded']
         total_net = total_gross - total_refunded
 
+        # Financial table pagination – without this,
+        # the entire table would render at once as the number of flights increased.
+        paginator = Paginator(flights_financials, 10)
+        page_obj = paginator.get_page(request.GET.get('page'))
+
         context = {
             'flight_count': Flight.objects.count(),
             'upcoming_flight_count': Flight.objects.upcoming().count(),
             'active_reservation_count': Reservation.objects.active().count(),
             'user_count': CustomUser.objects.count(),
-            'flights_financials': flights_financials,
+            'flights_financials': page_obj,
+            'page_obj': page_obj,
+            'is_paginated': page_obj.has_other_pages(),
             'total_gross': total_gross,
             'total_refunded': total_refunded,
             'total_net': total_net,
@@ -71,8 +81,8 @@ class DashboardHomeView(StaffRequiredMixin, View):
 
 class FlightManageListView(StaffRequiredMixin, ListView):
     """
-    لیست همه‌ی پروازها برای مدیریت — شامل پروازهای گذشته و آینده.
-    با ?filter=upcoming فقط پروازهای آینده و برنامه‌ریزی‌شده نمایش داده می‌شود.
+    List of all flights for management — including past and future flights.
+    Using ?filter=upcoming displays only future and scheduled flights.
     """
     model = Flight
     template_name = 'dashboard/flight_manage_list.html'
@@ -80,6 +90,8 @@ class FlightManageListView(StaffRequiredMixin, ListView):
     paginate_by = 15
 
     def get_queryset(self):
+        sync_flight_statuses()
+
         queryset = (
             Flight.objects
             .with_route_info()
@@ -104,12 +116,13 @@ class FlightManageListView(StaffRequiredMixin, ListView):
 
 
 class FlightManageDetailView(StaffRequiredMixin, DetailView):
-    """جزئیات یک پرواز برای مدیر، شامل لیست کامل رزروهای آن (فعال و کنسل‌شده)."""
+    """Flight details for the manager, including a complete list of its bookings (active and cancelled)."""
     model = Flight
     template_name = 'dashboard/flight_manage_detail.html'
     context_object_name = 'flight'
 
     def get_queryset(self):
+        sync_flight_statuses()
         return (
             Flight.objects
             .select_related('route__origin', 'route__destination', 'airline')
@@ -128,7 +141,7 @@ class FlightManageDetailView(StaffRequiredMixin, DetailView):
 
 
 class FlightCreateView(StaffRequiredMixin, View):
-    """ایجاد پرواز جدید همراه با کلاس‌های صندلی آن در یک فرم."""
+    """Creating a new flight along with its seating classes in a single form."""
     template_name = 'dashboard/flight_form.html'
 
     def get(self, request, *args, **kwargs):
@@ -153,7 +166,7 @@ class FlightCreateView(StaffRequiredMixin, View):
 
 
 class FlightEditView(StaffRequiredMixin, View):
-    """ویرایش یک پرواز موجود و کلاس‌های صندلی آن."""
+    """Editing an existing flight and its seat classes."""
     template_name = 'dashboard/flight_form.html'
 
     def get_flight(self):
@@ -202,8 +215,8 @@ class FlightEditView(StaffRequiredMixin, View):
 
 class GenerateSeatsView(StaffRequiredMixin, View):
     """
-    ساخت خودکار صندلی‌ها برای همه‌ی کلاس‌های صندلیِ یک پرواز، مستقیم از داشبورد
-    (بدون نیاز به رفتن به پنل ادمین جنگو).
+    Automated seat creation for all flight seat classes, directly from the dashboard
+    (without needing to access the Django admin panel).
     """
 
     def post(self, request, pk, *args, **kwargs):
@@ -229,8 +242,8 @@ class GenerateSeatsView(StaffRequiredMixin, View):
 
 class ReservationManageListView(StaffRequiredMixin, ListView):
     """
-    لیست همه‌ی رزروهای سیستم (نه فقط رزروهای یک کاربر خاص).
-    با ?filter=active فقط رزروهای فعال (کنسل‌نشده) نمایش داده می‌شود.
+    A list of all system reservations (not just those of a specific user).
+    Using `?filter=active` displays only active (non-cancelled) reservations.
     """
     model = Reservation
     template_name = 'dashboard/reservation_manage_list.html'
@@ -255,7 +268,7 @@ class ReservationManageListView(StaffRequiredMixin, ListView):
 
 
 class UserManageListView(StaffRequiredMixin, ListView):
-    """لیست همه‌ی کاربران ثبت‌نام‌شده برای مدیر."""
+    """List of all registered users for the administrator."""
     model = CustomUser
     template_name = 'dashboard/user_manage_list.html'
     context_object_name = 'users'
