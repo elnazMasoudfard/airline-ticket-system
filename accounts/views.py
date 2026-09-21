@@ -5,6 +5,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.core.cache import cache
 from django.core.mail import message as django_mail_message
 from django.core.mail import send_mail
 from django.shortcuts import redirect, render
@@ -15,10 +16,10 @@ from django.views.generic import DetailView, FormView, UpdateView, View
 from .forms import DepositForm, LoginForm, PhoneVerificationForm, ProfileEditForm, RegistrationForm
 from .models import CustomUser, EmailVerificationToken, PhoneVerificationCode
 
-# جنگو برای ایمیل‌های UTF-8 با خطوط کوتاه، مستقل از تنظیمات عمومی email.charset،
-# از یک شیء Charset داخلی خودش (utf8_charset) با body_encoding=None استفاده می‌کند
-# که در عمل یعنی BASE64. با تغییر مستقیم همین مقدار به QP (quoted-printable)،
-# متن ASCII (مثل لینک تایید) در کنسول/لاگ خوانا باقی می‌ماند.
+# For UTF-8 emails with short lines, Django uses its own internal Charset object (utf8_charset)
+# with body_encoding=None—effectively BASE64—regardless of the global email.charset setting.
+# By directly changing this value to QP (quoted-printable),
+# ASCII text (such as a confirmation link) remains readable in the console or logs.
 django_mail_message.utf8_charset.body_encoding = django_mail_message.Charset.QP
 
 logger = logging.getLogger('accounts')
@@ -26,7 +27,7 @@ security_logger = logging.getLogger('accounts.security')
 
 
 def send_verification_email(request, user):
-    """ایجاد توکن و ارسال ایمیل فعال‌سازی به کاربر."""
+    """Create a verification token and send a verification email to the user."""
     if not user.email:
         logger.warning(f"تلاش برای ارسال ایمیل تایید بدون ایمیل ثبت‌شده: user={user.username}")
         return
@@ -58,20 +59,26 @@ def send_verification_email(request, user):
 
 def send_verification_sms(user):
     """
-    ایجاد کد تایید ۶ رقمی برای شماره موبایل کاربر.
-    چون درگاه پیامک واقعی متصل نیست، ارسال آن شبیه‌سازی‌شده و فقط در
-    کنسول/لاگ سرور چاپ می‌شود (دقیقاً مثل رفتار EMAIL_BACKEND=console).
+    Generates a 6-digit verification code for the user's mobile number.
+    Since no actual SMS gateway is connected, the sending process is simulated.
+    The code value is printed or logged only in DEBUG mode (for local testing);
+    in a production environment (DEBUG=False), the code is not exposed to any
+    console or file, as it constitutes sensitive security information.
     """
-    # کدهای قبلی و استفاده‌نشده را باطل می‌کنیم تا فقط جدیدترین کد معتبر باشد
+    # invalidate previous, unused codes so that only the latest code remains valid.
     PhoneVerificationCode.objects.filter(user=user, used_at__isnull=True).update(used_at=timezone.now())
 
     verification = PhoneVerificationCode.objects.create(user=user)
-    print(f"[SMS DEBUG] کد تایید برای {user.phone_number}: {verification.code}")
-    logger.info(f"کد تایید پیامکی (شبیه‌سازی‌شده) ساخته شد: user={user.username}, phone={user.phone_number}")
+
+    if settings.DEBUG:
+        print(f"[SMS DEBUG] کد تایید برای {user.phone_number}: {verification.code}")
+        logger.info(f"کد تایید پیامکی (شبیه‌سازی‌شده) ساخته شد: user={user.username}, code={verification.code}")
+    else:
+        logger.warning(f"درگاه پیامک واقعی متصل نیست؛ کد تایید ساخته شد ولی ارسال نشد: user={user.username}")
 
 
 class RegisterView(FormView):
-    """ثبت‌نام کاربر جدید، ارسال ایمیل تایید، و ورود خودکار."""
+    """Register a new user, send a verification email, and log them in automatically."""
     template_name = 'accounts/register.html'
     form_class = RegistrationForm
     success_url = reverse_lazy('flights:flight_list')
@@ -90,7 +97,7 @@ class RegisterView(FormView):
 
 
 class VerifyEmailView(View):
-    """اعتبارسنجی توکن و فعال‌سازی تایید ایمیل کاربر."""
+    """Verify the email verification token and activate the user's email."""
 
     def get(self, request, token, *args, **kwargs):
         try:
@@ -116,7 +123,7 @@ class VerifyEmailView(View):
 
 
 class ResendVerificationEmailView(LoginRequiredMixin, View):
-    """ارسال دوباره‌ی لینک تایید ایمیل (مثلاً وقتی کاربر لینک اول را گم کرده یا منقضی شده)."""
+    """Resend the email verification link (e.g., when the user loses the first link or it expires)."""
 
     def post(self, request, *args, **kwargs):
         if request.user.email_verified:
@@ -131,13 +138,18 @@ class ResendVerificationEmailView(LoginRequiredMixin, View):
 
 class RequestPhoneVerificationView(LoginRequiredMixin, View):
     """
-    صفحه‌ی تایید شماره موبایل: یک دکمه برای ارسال کد (شبیه‌سازی‌شده)
-    و یک فرم برای وارد کردن کد دریافتی.
+    Phone verification page: A button to send the verification code (simulated)
+    and a form to enter the received code.
     """
     template_name = 'accounts/verify_phone.html'
+    MAX_ATTEMPTS = 5
+    LOCKOUT_SECONDS = 15 * 60
 
     def get(self, request, *args, **kwargs):
         return render(request, self.template_name, {'form': PhoneVerificationForm(), 'code_sent': False})
+
+    def _attempts_cache_key(self, user):
+        return f'phone_verify_attempts_{user.pk}'
 
     def post(self, request, *args, **kwargs):
         if request.user.phone_verified:
@@ -156,6 +168,16 @@ class RequestPhoneVerificationView(LoginRequiredMixin, View):
             )
             return render(request, self.template_name, {'form': PhoneVerificationForm(), 'code_sent': True})
 
+        cache_key = self._attempts_cache_key(request.user)
+        attempts = cache.get(cache_key, 0)
+        if attempts >= self.MAX_ATTEMPTS:
+            security_logger.warning(f"قفل موقت تایید پیامکی به‌خاطر تلاش زیاد: user={request.user.username}")
+            messages.error(
+                request,
+                "به‌خاطر تلاش‌های ناموفق زیاد، برای چند دقیقه امکان تایید کد وجود ندارد."
+            )
+            return render(request, self.template_name, {'form': PhoneVerificationForm(), 'code_sent': True})
+
         form = PhoneVerificationForm(request.POST)
         if form.is_valid():
             code = form.cleaned_data['code']
@@ -167,11 +189,13 @@ class RequestPhoneVerificationView(LoginRequiredMixin, View):
             )
 
             if verification is None:
+                cache.set(cache_key, attempts + 1, timeout=self.LOCKOUT_SECONDS)
                 security_logger.warning(f"کد تایید پیامکی اشتباه: user={request.user.username}")
                 messages.error(request, "کد وارد‌شده اشتباه است.")
             elif verification.is_expired:
                 messages.error(request, "کد منقضی شده است. دوباره درخواست بدهید.")
             else:
+                cache.delete(cache_key)
                 verification.used_at = timezone.now()
                 verification.save(update_fields=['used_at'])
                 request.user.phone_verified = True
@@ -184,21 +208,27 @@ class RequestPhoneVerificationView(LoginRequiredMixin, View):
 
 
 class LoginView(FormView):
-    """ورود کاربر با نام کاربری و رمز عبور."""
+    """User login using username or email, along with the password."""
     template_name = 'accounts/login.html'
     form_class = LoginForm
     success_url = reverse_lazy('flights:flight_list')
 
     def form_valid(self, form):
-        username = form.cleaned_data['username']
-        user = authenticate(
-            self.request,
-            username=username,
-            password=form.cleaned_data['password'],
-        )
+        identifier = form.cleaned_data['username']
+        password = form.cleaned_data['password']
+
+        user = authenticate(self.request, username=identifier, password=password)
+
+        # If the value is not found as a username but resembles an email address,
+        # locate the user via their email and authenticate them using their actual username.
+        if user is None and '@' in identifier:
+            matched_user = CustomUser.objects.filter(email__iexact=identifier).first()
+            if matched_user:
+                user = authenticate(self.request, username=matched_user.username, password=password)
+
         if user is None:
-            security_logger.warning(f"تلاش ناموفق برای ورود: username={username}")
-            form.add_error(None, "نام کاربری یا رمز عبور اشتباه است.")
+            security_logger.warning(f"تلاش ناموفق برای ورود: identifier={identifier}")
+            form.add_error(None, "نام کاربری/ایمیل یا رمز عبور اشتباه است.")
             return self.form_invalid(form)
 
         security_logger.info(f"ورود موفق کاربر: username={user.username}")
@@ -214,7 +244,7 @@ class LogoutView(LoginRequiredMixin, View):
 
 
 class ProfileView(LoginRequiredMixin, DetailView):
-    """پروفایل کاربر شامل موجودی کیف پول و اطلاعات حساب."""
+    """User profile including wallet balance and account information."""
     model = CustomUser
     template_name = 'accounts/profile.html'
     context_object_name = 'profile_user'
@@ -225,9 +255,9 @@ class ProfileView(LoginRequiredMixin, DetailView):
 
 class ProfileEditView(LoginRequiredMixin, UpdateView):
     """
-    ویرایش اطلاعات پروفایل (نام، نام خانوادگی، ایمیل، موبایل).
-    اگر ایمیل یا موبایل تغییر کند، وضعیت تاییدش به‌صورت خودکار به
-    «تایید نشده» برمی‌گردد، چون تاییدیه‌ی قبلی مربوط به مقدار قدیمی بوده است.
+    Edit user profile information (first name, last name, email, phone number).
+    If the email or phone number is changed, the verification status will be automatically reset to
+    "not verified" since the previous verification was based on the old values.
     """
     model = CustomUser
     form_class = ProfileEditForm
@@ -263,7 +293,7 @@ class ProfileEditView(LoginRequiredMixin, UpdateView):
 
 
 class DepositView(LoginRequiredMixin, FormView):
-    """شارژ کیف پول (شبیه‌سازی‌شده، بدون اتصال به درگاه پرداخت واقعی)."""
+    """Deposit funds into the user's wallet (simulated, without connecting to a real payment gateway)."""
     template_name = 'accounts/deposit.html'
     form_class = DepositForm
     success_url = reverse_lazy('accounts:profile')
