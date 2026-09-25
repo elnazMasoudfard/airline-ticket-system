@@ -2,13 +2,13 @@ from django.views.generic import DetailView, ListView
 
 from .forms import FlightSearchForm
 from .models import Flight
-from .services import sync_flight_statuses
+
 
 
 class FlightListView(ListView):
     """
-    لیست پروازهای آینده (برنامه‌ریزی‌شده) با امکان جستجو بر اساس
-    مبدا، مقصد و تاریخ حرکت.
+    List of upcoming (scheduled) flights, with search functionality based on
+    origin, destination, and departure date.
     """
     model = Flight
     template_name = 'flights/flight_list.html'
@@ -16,7 +16,6 @@ class FlightListView(ListView):
     paginate_by = 10
 
     def get_queryset(self):
-        sync_flight_statuses()
 
         queryset = Flight.objects.upcoming().with_route_info().prefetch_related('seat_classes')
 
@@ -38,18 +37,17 @@ class FlightListView(ListView):
         return context
 
     def get_template_names(self):
-        # درخواست‌های Ajax فقط بخش نتایج را می‌خواهند، نه کل صفحه
+        # Ajax requests only require the results section, not the entire page.
         if self.request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             return ['flights/_flight_results.html']
         return [self.template_name]
 
 
 class FlightDetailView(DetailView):
-    """جزئیات یک پرواز به همراه کلاس‌های صندلی و قیمت نهایی هر کدام."""
+    """Flight details, including seating classes and the final price for each."""
     model = Flight
     template_name = 'flights/flight_detail.html'
     context_object_name = 'flight'
 
     def get_queryset(self):
-        sync_flight_statuses()
         return Flight.objects.with_route_info().prefetch_related('seat_classes')
