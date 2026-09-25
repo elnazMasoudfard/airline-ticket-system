@@ -6,11 +6,13 @@ from .models import Airport
 
 class FlightSearchForm(forms.Form):
     origin = forms.ModelChoiceField(
+        required=False,
         queryset=Airport.objects.all(),
         widget=forms.Select(attrs={'class': 'form-control'}),
         label="مبدا"
     )
     destination = forms.ModelChoiceField(
+        required=False,
         queryset=Airport.objects.all(),
         widget=forms.Select(attrs={'class': 'form-control'}),
         label="مقصد"
@@ -30,7 +32,7 @@ class FlightSearchForm(forms.Form):
 
     def clean_departure_date(self):
         departure_date = self.cleaned_data.get('departure_date')
-        if departure_date and departure_date < timezone.now().date():
+        if departure_date and departure_date < timezone.localdate():
             raise forms.ValidationError("تاریخ حرکت نمی‌تواند در گذشته باشد.")
         return departure_date
 
