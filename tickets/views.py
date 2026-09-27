@@ -3,13 +3,15 @@ from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import F
 from django.forms import modelformset_factory
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.views.generic import DetailView, ListView, View
+from django import forms
+from django.forms import BaseModelFormSet
 
 from flights.models import Seat, SeatClass
 from .forms import PassengerForm, ReservationForm
@@ -225,88 +227,319 @@ class SeatSelectionView(LoginRequiredMixin, View):
         )
         return redirect('tickets:add_passengers', booking_reference=reservation.booking_reference)
 
+class PassengerBaseFormSet(BaseModelFormSet):
+    def clean(self):
+        super().clean()
+
+        # If the separate forms contain errors,
+        # there is no need to check the national ID numbers.
+        if any(self.errors):
+            return
+
+        national_ids = []
+
+        for form in self.forms:
+            if not hasattr(form, 'cleaned_data'):
+                continue
+
+            if not form.cleaned_data:
+                continue
+
+            if form.cleaned_data.get('DELETE', False):
+                continue
+
+            national_id = form.cleaned_data.get('national_id')
+
+            if national_id:
+                national_ids.append(national_id)
+
+        # Checking for duplicate National IDs in this same reservation
+        if len(national_ids) != len(set(national_ids)):
+            raise forms.ValidationError(
+                "کد ملی مسافران یک رزرو نباید تکراری باشد."
+            )
 
 class AddPassengersView(LoginRequiredMixin, View):
-    """Step 3: Collect passenger information for `seats_count` passengers."""
+    """Step 3: Collect passenger information for all reserved seats."""
+
     template_name = 'tickets/add_passengers.html'
 
     def get_reservation(self):
         return get_object_or_404(
-            Reservation, booking_reference=self.kwargs['booking_reference'], user=self.request.user
+            Reservation.objects.filter(
+                status=Reservation.StatusChoices.RESERVED
+            ),
+            booking_reference=self.kwargs['booking_reference'],
+            user=self.request.user,
         )
 
-    def get_formset_class(self, seats_count):
-        return modelformset_factory(Passenger, form=PassengerForm, extra=seats_count)
+    def get_formset_class(self, seats_count, existing_count=0):
+        remaining_count = max(0, seats_count - existing_count)
+
+        return modelformset_factory(
+            Passenger,
+            form=PassengerForm,
+            formset=PassengerBaseFormSet,
+            extra=remaining_count,
+            min_num=seats_count,
+            max_num=seats_count,
+            validate_min=True,
+            validate_max=True,
+        )
 
     def get(self, request, *args, **kwargs):
         reservation = self.get_reservation()
-        formset_class = self.get_formset_class(reservation.seats_count)
-        formset = formset_class(queryset=Passenger.objects.none())
-        return render(request, self.template_name, {'reservation': reservation, 'formset': formset})
+
+        existing_passengers = reservation.passengers.all()
+        existing_count = existing_passengers.count()
+
+        # If the information for all passengers has already been recorded,
+        # doesn't display the information entry form again.
+        if existing_count >= reservation.seats_count:
+            messages.info(
+                request,
+                "اطلاعات همه مسافران این رزرو قبلاً ثبت شده است."
+            )
+            return redirect(
+                'tickets:reservation_detail',
+                booking_reference=reservation.booking_reference,
+            )
+
+        formset_class = self.get_formset_class(
+            reservation.seats_count,
+            existing_count,
+        )
+
+        formset = formset_class(queryset=existing_passengers)
+
+        return render(
+            request,
+            self.template_name,
+            {
+                'reservation': reservation,
+                'formset': formset,
+            },
+        )
 
     def post(self, request, *args, **kwargs):
-        reservation = self.get_reservation()
-        formset_class = self.get_formset_class(reservation.seats_count)
-        formset = formset_class(request.POST, queryset=Passenger.objects.none())
+        try:
+            with transaction.atomic():
+                # Reservation lock to prevent the simultaneous submission of multiple requests
+                reservation = get_object_or_404(
+                    Reservation.objects.select_for_update().filter(
+                        status=Reservation.StatusChoices.RESERVED
+                    ),
+                    booking_reference=kwargs['booking_reference'],
+                    user=request.user,
+                )
 
-        if formset.is_valid():
-            passengers = formset.save(commit=False)
-            for passenger in passengers:
-                passenger.reservation = reservation
-                passenger.save()
-            logger.info(
-                f"اطلاعات مسافران ثبت شد: booking_reference={reservation.booking_reference}, "
-                f"passenger_count={len(passengers)}"
+                existing_passengers = reservation.passengers.all()
+                existing_count = existing_passengers.count()
+
+                # If the information has already been fully recorded,
+                # a duplicate request should not create a new passenger.
+                if existing_count >= reservation.seats_count:
+                    messages.info(
+                        request,
+                        "اطلاعات مسافران این رزرو قبلاً ثبت شده است."
+                    )
+                    return redirect(
+                        'tickets:reservation_detail',
+                        booking_reference=reservation.booking_reference,
+                    )
+
+                formset_class = self.get_formset_class(
+                    reservation.seats_count,
+                    existing_count,
+                )
+
+                formset = formset_class(
+                    request.POST,
+                    queryset=existing_passengers,
+                )
+
+                if not formset.is_valid():
+                    return render(
+                        request,
+                        self.template_name,
+                        {
+                            'reservation': reservation,
+                            'formset': formset,
+                        },
+                    )
+
+                passengers = formset.save(commit=False)
+
+                for passenger in passengers:
+                    passenger.reservation = reservation
+                    passenger.save()
+
+                # The final number of passengers must exactly match the number of seats.
+                final_count = reservation.passengers.count()
+
+                if final_count != reservation.seats_count:
+                    raise ValueError(
+                        "تعداد مسافران ثبت‌شده با تعداد صندلی‌ها مطابقت ندارد."
+                    )
+
+        except IntegrityError:
+            logger.exception(
+                "خطای دیتابیس هنگام ثبت مسافران: "
+                f"booking_reference={kwargs['booking_reference']}, "
+                f"user={request.user.username}"
             )
-            messages.success(request, "اطلاعات مسافران با موفقیت ثبت شد.")
-            return redirect('tickets:reservation_detail', booking_reference=reservation.booking_reference)
+            messages.error(
+                request,
+                "ثبت اطلاعات مسافران به دلیل تکراری بودن یا تداخل اطلاعات انجام نشد. "
+                "لطفاً اطلاعات را بررسی و دوباره تلاش کنید."
+            )
+            reservation = self.get_reservation()
+            existing_passengers = reservation.passengers.all()
+            formset_class = self.get_formset_class(
+                reservation.seats_count,
+                existing_passengers.count(),
+            )
+            formset = formset_class(queryset=existing_passengers)
 
-        return render(request, self.template_name, {'reservation': reservation, 'formset': formset})
+            return render(
+                request,
+                self.template_name,
+                {
+                    'reservation': reservation,
+                    'formset': formset,
+                },
+            )
 
+        except ValueError:
+            logger.exception(
+                "تعداد مسافران پس از ثبت با تعداد صندلی‌ها مطابقت نداشت: "
+                f"booking_reference={kwargs['booking_reference']}"
+            )
+            messages.error(
+                request,
+                "ثبت اطلاعات کامل نشد. لطفاً دوباره تلاش کنید."
+            )
+            reservation = self.get_reservation()
+            existing_passengers = reservation.passengers.all()
+            formset_class = self.get_formset_class(
+                reservation.seats_count,
+                existing_passengers.count(),
+            )
+            formset = formset_class(queryset=existing_passengers)
+
+            return render(
+                request,
+                self.template_name,
+                {
+                    'reservation': reservation,
+                    'formset': formset,
+                },
+            )
+
+        logger.info(
+            f"اطلاعات مسافران ثبت شد: "
+            f"booking_reference={reservation.booking_reference}, "
+            f"passenger_count={reservation.passengers.count()}"
+        )
+
+        messages.success(request, "اطلاعات مسافران با موفقیت ثبت شد.")
+
+        return redirect(
+            'tickets:reservation_detail',
+            booking_reference=reservation.booking_reference,
+        )
 
 class ReservationCancelView(LoginRequiredMixin, View):
-    """Canceling a reservation: releasing specific seats, updating the seat class capacity counter,
-    calculating the cancellation fee, and processing the refund.
+    """
+    Cancel a reservation safely:
+    - Lock the reservation row to prevent double cancellation/refund.
+    - Release the selected seats.
+    - Remove ReservationSeat links so the seats can be booked again.
+    - Restore SeatClass capacity.
+    - Calculate and save the refund.
+    - Deposit the refund only when it is greater than zero.
     """
 
     def post(self, request, *args, **kwargs):
-        reservation = get_object_or_404(
-            Reservation, booking_reference=kwargs['booking_reference'], user=request.user
-        )
-
-        if reservation.status == Reservation.StatusChoices.CANCELLED:
-            messages.warning(request, "این رزرو قبلاً کنسل شده است.")
-            return redirect('tickets:reservation_detail', booking_reference=reservation.booking_reference)
-
-        penalty_percent = reservation.seat_class.flight.cancellation_penalty_percent
-        refund_amount = (
-            reservation.total_paid_price * (Decimal(100 - penalty_percent) / Decimal(100))
-        ).quantize(Decimal('0.01'))
-
         with transaction.atomic():
+            # Lock the reservation row.
+            # This prevents two simultaneous cancellation requests
+            # from both processing the same reservation.
+            reservation = get_object_or_404(
+                Reservation.objects.select_for_update(),
+                booking_reference=kwargs['booking_reference'],
+                user=request.user,
+            )
+
+            # IMPORTANT:
+            # The status check must happen AFTER select_for_update().
+            # Otherwise two concurrent requests could both see RESERVED.
+            if reservation.status == Reservation.StatusChoices.CANCELLED:
+                messages.warning(request, "این رزرو قبلاً کنسل شده است.")
+                return redirect(
+                    'tickets:reservation_detail',
+                    booking_reference=reservation.booking_reference
+                )
+
+            penalty_percent = reservation.seat_class.flight.cancellation_penalty_percent
+
+            refund_amount = (
+                reservation.total_paid_price
+                * (Decimal(100 - penalty_percent) / Decimal(100))
+            ).quantize(Decimal('0.01'))
+
             seat_ids = list(
                 reservation.reservation_seats.values_list('seat_id', flat=True)
             )
-            # Note: .update() bypasses auto_now, so we set updated_at manually.
-            Seat.objects.filter(id__in=seat_ids).update(is_available=True, updated_at=timezone.now())
 
+            # Release the actual seats.
+            Seat.objects.filter(id__in=seat_ids).update(
+                is_available=True,
+                updated_at=timezone.now(),
+            )
+
+            # Restore the available seat counter for the class.
             SeatClass.objects.filter(pk=reservation.seat_class_id).update(
                 available_seats=F('available_seats') + reservation.seats_count,
                 updated_at=timezone.now(),
             )
 
+            # IMPORTANT:
+            # Remove the ReservationSeat records.
+            #
+            # Without this, the OneToOne relation between Seat and
+            # ReservationSeat remains and the seat cannot be booked again.
+            reservation.reservation_seats.all().delete()
+
+            # Mark the reservation as cancelled.
             reservation.status = Reservation.StatusChoices.CANCELLED
             reservation.cancelled_at = timezone.now()
             reservation.refund_amount = refund_amount
-            # 'updated_at' must be explicitly included in update_fields, otherwise it won't be saved.
-            reservation.save(update_fields=['status', 'cancelled_at', 'refund_amount', 'updated_at'])
 
-            request.user.deposit(refund_amount)
+            reservation.save(
+                update_fields=[
+                    'status',
+                    'cancelled_at',
+                    'refund_amount',
+                    'updated_at',
+                ]
+            )
+
+            # A 100% penalty means refund_amount == 0.
+            # Do not call deposit(0), because deposit may reject zero amounts.
+            if refund_amount > 0:
+                request.user.deposit(refund_amount)
 
         logger.info(
             f"رزرو کنسل شد: booking_reference={reservation.booking_reference}, "
-            f"user={request.user.username}, penalty_percent={penalty_percent}, "
+            f"user={request.user.username}, "
+            f"penalty_percent={penalty_percent}, "
             f"refund_amount={refund_amount}"
         )
-        messages.success(request, f"رزرو کنسل شد. مبلغ {refund_amount} تومان به کیف پول شما بازگشت.")
+
+        messages.success(
+            request,
+            f"رزرو کنسل شد. مبلغ {refund_amount} تومان به کیف پول شما بازگشت."
+        )
+
         return redirect('tickets:reservation_list')
