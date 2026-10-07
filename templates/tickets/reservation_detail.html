@@ -18,64 +18,211 @@
   </div>
 
   <div class="boarding-pass-details">
-    <div><span class="detail-label">پرواز</span><span class="mono">{{ reservation.seat_class.flight.flight_number }}</span></div>
-    <div><span class="detail-label">تاریخ حرکت</span><span>{{ reservation.seat_class.flight.departure_datetime|date:"Y/m/d - H:i" }}</span></div>
-    <div><span class="detail-label">کلاس</span><span>{{ reservation.seat_class.get_class_type_display }}</span></div>
-    <div><span class="detail-label">تعداد صندلی</span><span>{{ reservation.seats_count }}</span></div>
+    <div>
+      <span class="detail-label">پرواز</span>
+      <span class="mono">{{ reservation.seat_class.flight.flight_number }}</span>
+    </div>
+
+    <div>
+      <span class="detail-label">تاریخ حرکت</span>
+      <span>{{ reservation.seat_class.flight.departure_datetime|date:"Y/m/d - H:i" }}</span>
+    </div>
+
+    <div>
+      <span class="detail-label">کلاس</span>
+      <span>{{ reservation.seat_class.get_class_type_display }}</span>
+    </div>
+
+    <div>
+      <span class="detail-label">تعداد صندلی</span>
+      <span>{{ reservation.seats_count }}</span>
+    </div>
+
     <div>
       <span class="detail-label">شماره صندلی‌ها</span>
       <span class="mono">
-        {% for rs in reservation.reservation_seats.all %}{{ rs.seat.seat_number }}{% if not forloop.last %}, {% endif %}{% endfor %}
+        {% for rs in reservation.reservation_seats.all %}
+          {{ rs.seat.seat_number }}{% if not forloop.last %}, {% endif %}
+        {% empty %}
+          —
+        {% endfor %}
       </span>
     </div>
-    <div><span class="detail-label">مبلغ پرداختی</span><span class="mono">{{ reservation.total_paid_price|floatformat:0 }} تومان</span></div>
-    {% if reservation.status == 'cancelled' %}
-      <div><span class="detail-label">مبلغ استرداد</span><span class="mono">{{ reservation.refund_amount|floatformat:0 }} تومان</span></div>
+
+    {# پرداخت انجام شده است #}
+    {% if reservation.paid_at or reservation.status == 'reserved' %}
+
+      <div>
+        <span class="detail-label">مبلغ پرداختی</span>
+        <span class="mono">{{ reservation.total_paid_price|floatformat:"0g" }} تومان</span>
+      </div>
+
+      {# فقط برای رزرو پرداخت‌شده‌ای که بعداً لغو شده است #}
+      {% if reservation.status == 'cancelled' %}
+        <div>
+          <span class="detail-label">مبلغ استرداد</span>
+          <span class="mono">{{ reservation.refund_amount|floatformat:"0g" }} تومان</span>
+        </div>
+      {% endif %}
+
+    {# پرداخت انجام نشده است #}
+    {% else %}
+
+      <div>
+        <span class="detail-label">مبلغ رزرو</span>
+        <span class="mono">{{ reservation.total_paid_price|floatformat:"0g" }} تومان</span>
+      </div>
+
+      <div>
+        <span class="detail-label">وضعیت پرداخت</span>
+        <span>پرداخت نشده</span>
+      </div>
+
+      {% if reservation.status == 'pending_payment' and reservation.payment_expires_at %}
+        <div>
+          <span class="detail-label">مهلت پرداخت</span>
+          <span>تا ساعت {{ reservation.payment_expires_at|date:"H:i" }}</span>
+        </div>
+      {% endif %}
+
     {% endif %}
   </div>
+
+  {# دلیل لغو رزرو #}
+  {% if reservation.status == 'cancelled' %}
+    <div class="empty-hint">
+      {% if reservation.cancellation_reason == 'timeout' %}
+        این رزرو به دلیل پایان مهلت {{ payment_window_minutes }} دقیقه‌ای پرداخت،
+        به‌صورت خودکار لغو شده است.
+      {% elif reservation.cancellation_reason == 'flight_cancelled' %}
+        {% if reservation.paid_at %}
+          این رزرو به دلیل لغو پرواز کنسل شد و کل مبلغ پرداختی بدون جریمه به کیف پول بازگردانده شد.
+        {% else %}
+          این رزرو به دلیل لغو پرواز کنسل شد. مبلغی از شما کسر نشده بود.
+        {% endif %}
+      {% elif reservation.cancellation_reason == 'user' %}
+        این رزرو توسط شما لغو شده است.
+      {% else %}
+        این رزرو لغو شده است.
+      {% endif %}
+    </div>
+  {% endif %}
 
   <div class="boarding-pass-divider"></div>
 
   <div class="passengers-section">
     <h2>مسافران</h2>
+
     {% if reservation.passengers.all %}
       <ul class="passenger-list">
         {% for passenger in reservation.passengers.all %}
-          <li>{{ passenger.first_name }} {{ passenger.last_name }} — <span class="mono">{{ passenger.national_id }}</span></li>
+          <li>
+            {{ passenger.first_name }} {{ passenger.last_name }}
+            —
+            <span class="mono">{{ passenger.national_id }}</span>
+          </li>
         {% endfor %}
       </ul>
     {% else %}
-      <p class="empty-hint">هنوز اطلاعات مسافران ثبت نشده است.</p>
-      <a href="{% url 'tickets:add_passengers' reservation.booking_reference %}" class="btn btn-accent btn-sm">تکمیل اطلاعات مسافران</a>
+      <p class="empty-hint">اطلاعات مسافران ثبت نشده است.</p>
+
+      {# فقط رزرو در انتظار پرداخت می‌تواند مسافر بگیرد #}
+      {% if reservation.status == 'pending_payment' %}
+        <a
+          href="{% url 'tickets:add_passengers' reservation.booking_reference %}"
+          class="btn btn-accent btn-sm"
+        >
+          تکمیل اطلاعات مسافران
+        </a>
+      {% endif %}
     {% endif %}
   </div>
 </section>
 
-{% if reservation.status == 'reserved' %}
+
+{# رزرو در انتظار پرداخت #}
+{% if reservation.status == 'pending_payment' %}
+
   <div class="cancel-form">
-    <button type="button" class="btn btn-danger" onclick="document.getElementById('cancelModal').classList.add('modal-open')">
+    <a
+      href="{% url 'tickets:reservation_payment' reservation.booking_reference %}"
+      class="btn btn-primary"
+    >
+      ادامه به پرداخت
+    </a>
+
+    <form
+      action="{% url 'tickets:reservation_cancel' reservation.booking_reference %}"
+      method="post"
+      class="inline-form"
+    >
+      {% csrf_token %}
+
+      <button type="submit" class="btn btn-danger">
+        لغو رزرو پرداخت‌نشده
+      </button>
+    </form>
+  </div>
+
+
+{# رزرو پرداخت‌شده و نهایی #}
+{% elif reservation.status == 'reserved' %}
+
+  <div class="cancel-form">
+    <button
+      type="button"
+      class="btn btn-danger"
+      onclick="document.getElementById('cancelModal').classList.add('modal-open')"
+    >
       کنسل کردن رزرو
     </button>
   </div>
 
   <div class="modal-overlay" id="cancelModal">
     <div class="modal-box">
+
       <h3>لغو رزرو</h3>
+
       <p>
-        آیا مطمئن هستید که می‌خواهید رزرو <strong class="mono">{{ reservation.booking_reference }}</strong> را کنسل کنید؟
-        بر اساس سیاست جریمه‌ی کنسلی این پرواز ({{ reservation.seat_class.flight.cancellation_penalty_percent }}٪)،
-        بخشی از مبلغ پرداختی ممکن است کسر شود.
+        آیا مطمئن هستید که می‌خواهید رزرو
+        <strong class="mono">{{ reservation.booking_reference }}</strong>
+        را کنسل کنید؟
+
+        {% if penalty_percent %}
+          بر اساس سیاست جریمه‌ی کنسلی این پرواز
+          ({{ penalty_percent|floatformat:"-2" }}٪)،
+          بخشی از مبلغ پرداختی کسر می‌شود.
+        {% else %}
+          برای این رزرو جریمه‌ای در نظر گرفته نشده و کل مبلغ به کیف پول شما بازمی‌گردد.
+        {% endif %}
       </p>
+
       <div class="modal-actions">
-        <button type="button" class="btn btn-ghost" onclick="document.getElementById('cancelModal').classList.remove('modal-open')">
+
+        <button
+          type="button"
+          class="btn btn-ghost"
+          onclick="document.getElementById('cancelModal').classList.remove('modal-open')"
+        >
           انصراف
         </button>
-        <form action="{% url 'tickets:reservation_cancel' reservation.booking_reference %}" method="post" class="inline-form">
+
+        <form
+          action="{% url 'tickets:reservation_cancel' reservation.booking_reference %}"
+          method="post"
+          class="inline-form"
+        >
           {% csrf_token %}
-          <button type="submit" class="btn btn-danger">بله، کنسل کن</button>
+
+          <button type="submit" class="btn btn-danger">
+            بله، کنسل کن
+          </button>
         </form>
+
       </div>
     </div>
   </div>
+
 {% endif %}
+
 {% endblock %}

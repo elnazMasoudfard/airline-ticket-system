@@ -24,7 +24,7 @@
         <div class="ticket-divider" aria-hidden="true"></div>
         <div class="ticket-side">
           {% reservation_status_badge reservation %}
-          <span class="mono">{{ reservation.total_paid_price|floatformat:0 }} تومان</span>
+          <span class="mono">{{ reservation.total_paid_price|floatformat:"0g" }} تومان</span>
         </div>
       </a>
     {% endfor %}

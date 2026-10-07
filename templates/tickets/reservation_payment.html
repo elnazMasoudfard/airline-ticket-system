@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% block title %}پرداخت رزرو {{ reservation.booking_reference }}{% endblock %}
+{% block content %}
+<section class="auth-card auth-card-wide">
+  <h1 class="page-title">پرداخت رزرو</h1>
+  <p>کد رزرو: <strong class="mono">{{ reservation.booking_reference }}</strong></p>
+  <p>مبلغ قابل پرداخت: <strong class="mono">{{ reservation.total_paid_price|floatformat:"0g" }} تومان</strong></p>
+  <p>
+    این رزرو تا {{ payment_window_minutes }} دقیقه پس از انتخاب صندلی برای پرداخت معتبر است
+    {% if reservation.payment_expires_at %}(تا ساعت {{ reservation.payment_expires_at|date:"H:i" }}){% endif %}.
+    در صورت عدم پرداخت در این مدت، رزرو به‌صورت خودکار لغو و صندلی‌ها آزاد خواهند شد.
+  </p>
+  <form method="post">{% csrf_token %}<button type="submit" class="btn btn-primary btn-block">پرداخت و نهایی‌کردن رزرو</button></form>
+  <a href="{% url 'tickets:reservation_detail' reservation.booking_reference %}" class="btn btn-ghost">بازگشت به جزئیات رزرو</a>
+</section>
+{% endblock %}

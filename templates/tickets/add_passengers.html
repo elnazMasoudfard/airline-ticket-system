@@ -5,6 +5,9 @@
 <section class="auth-card auth-card-wide">
   <h1 class="page-title">اطلاعات مسافران</h1>
   <p class="seat-summary mono">کد رزرو: {{ reservation.booking_reference }}</p>
+  {% if reservation.payment_expires_at %}
+    <p class="empty-hint">مهلت تکمیل و پرداخت: تا ساعت {{ reservation.payment_expires_at|date:"H:i" }}</p>
+  {% endif %}
 
   <form method="post" novalidate>
     {% csrf_token %}
@@ -12,7 +15,9 @@
     {% for pform in formset %}
       <div class="passenger-form-block">
         <h3>مسافر {{ forloop.counter }}</h3>
-        {% for field in pform %}
+        {% for hidden in pform.hidden_fields %}{{ hidden }}{% endfor %}
+        {% for error in pform.non_field_errors %}<p class="field-error">{{ error }}</p>{% endfor %}
+        {% for field in pform.visible_fields %}
           <div class="field">
             <label for="{{ field.id_for_label }}">{{ field.label }}</label>
             {{ field }}
@@ -22,7 +27,7 @@
       </div>
     {% endfor %}
     {% for error in formset.non_form_errors %}<p class="field-error">{{ error }}</p>{% endfor %}
-    <button type="submit" class="btn btn-primary btn-block">ثبت نهایی</button>
+    <button type="submit" class="btn btn-primary btn-block">ادامه به پرداخت</button>
   </form>
 </section>
 {% endblock %}
