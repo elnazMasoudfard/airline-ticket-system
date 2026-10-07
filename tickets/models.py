@@ -1,28 +1,36 @@
 import uuid
 from decimal import Decimal
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, RegexValidator
 from django.db import models
+from django.utils import timezone
+
 from core.models import TimeStampedModel
 from flights.models import Seat, SeatClass
 
 
 class ReservationQuerySet(models.QuerySet):
     def active(self):
-        """فقط رزروهای فعال (کنسل‌نشده)."""
-        return self.filter(status=Reservation.StatusChoices.RESERVED)
+        """Reservations that still hold seats, including unpaid ones."""
+        return self.filter(
+            status__in=[
+                Reservation.StatusChoices.PENDING_PAYMENT,
+                Reservation.StatusChoices.RESERVED,
+            ]
+        )
 
     def cancelled(self):
-        """فقط رزروهای کنسل‌شده."""
+        """Cancelled reservations only."""
         return self.filter(status=Reservation.StatusChoices.CANCELLED)
 
     def for_user(self, user):
-        """رزروهای یک کاربر مشخص."""
+        """Bookings for a specific user"""
         return self.filter(user=user)
 
     def with_flight_info(self):
-        """select_related استاندارد برای نمایش اطلاعات پرواز بدون N+1 query."""
+        """Use `select_related` to display flight information without N+1 queries."""
         return self.select_related(
             'seat_class__flight__route__origin',
             'seat_class__flight__route__destination',
@@ -35,8 +43,14 @@ ReservationManager = models.Manager.from_queryset(ReservationQuerySet)
 
 class Reservation(TimeStampedModel):
     class StatusChoices(models.TextChoices):
+        PENDING_PAYMENT = 'pending_payment', 'در انتظار پرداخت'
         RESERVED = 'reserved', 'رزرو شده (قطعی)'
         CANCELLED = 'cancelled', 'کنسل شده'
+
+    class CancellationReason(models.TextChoices):
+        USER = 'user', 'لغو توسط کاربر'
+        TIMEOUT = 'timeout', 'پایان مهلت پرداخت'
+        FLIGHT_CANCELLED = 'flight_cancelled', 'لغو پرواز'
 
     booking_reference = models.CharField(
         max_length=10,
@@ -44,41 +58,76 @@ class Reservation(TimeStampedModel):
         editable=False,
         verbose_name="شناسه رزرو (PNR)"
     )
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
         related_name='reservations',
         verbose_name="کاربر رزروکننده"
     )
+
     seat_class = models.ForeignKey(
         SeatClass,
         on_delete=models.PROTECT,
         related_name='reservations',
         verbose_name="کلاس صندلی"
     )
+
     seats_count = models.PositiveSmallIntegerField(
         default=1,
         validators=[MinValueValidator(1)],
         verbose_name="تعداد صندلی"
     )
+
+    payment_expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="مهلت پرداخت"
+    )
+
+    # NOTE: while the reservation is still pending this holds the amount
+    # that must be paid; it becomes the "paid" amount after payment.
     total_paid_price = models.DecimalField(
         max_digits=12,
         decimal_places=2,
-        verbose_name="مبلغ پرداخت‌شده (تومان)"
+        verbose_name="مبلغ رزرو/پرداخت‌شده (تومان)"
     )
+
+    paid_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="تاریخ و ساعت پرداخت"
+    )
+
     refund_amount = models.DecimalField(
         max_digits=12,
         decimal_places=2,
         default=Decimal('0.00'),
         verbose_name="مبلغ استردادشده (تومان)"
     )
+
+    # A new reservation must never become "final" by accident:
+    # it starts as pending and only the payment flow makes it RESERVED.
     status = models.CharField(
-        max_length=15,
+        max_length=20,
         choices=StatusChoices.choices,
-        default=StatusChoices.RESERVED,
+        default=StatusChoices.PENDING_PAYMENT,
         verbose_name="وضعیت رزرو"
     )
-    cancelled_at = models.DateTimeField(null=True, blank=True, verbose_name="تاریخ و ساعت کنسلی")
+
+    cancelled_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="تاریخ و ساعت کنسلی"
+    )
+
+    cancellation_reason = models.CharField(
+        max_length=20,
+        choices=CancellationReason.choices,
+        blank=True,
+        default='',
+        verbose_name="دلیل کنسلی"
+    )
 
     objects = ReservationManager()
 
@@ -88,11 +137,32 @@ class Reservation(TimeStampedModel):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['user', 'status']),
+            # Used by the expiry job.
+            models.Index(fields=['status', 'payment_expires_at']),
         ]
 
+    @property
+    def is_payment_expired(self):
+        """
+        True when a pending reservation can no longer be paid.
+        A pending reservation without a deadline is treated as expired,
+        so it can never hold seats forever.
+        """
+        if self.status != self.StatusChoices.PENDING_PAYMENT:
+            return False
+        return (
+            self.payment_expires_at is None
+            or self.payment_expires_at <= timezone.now()
+        )
+
     def clean(self):
-        if self.pk and self.seats_count != self.passengers.count():
-            raise ValidationError("تعداد صندلی با تعداد مسافران ثبت‌شده مطابقت ندارد.")
+        super().clean()
+        if self.seats_count < 1:
+            raise ValidationError({'seats_count': "تعداد صندلی باید حداقل یک باشد."})
+        # Passenger count is required only for a paid/final reservation.
+        if self.pk and self.status == self.StatusChoices.RESERVED:
+            if self.seats_count != self.passengers.count():
+                raise ValidationError("تعداد صندلی با تعداد مسافران ثبت‌شده مطابقت ندارد.")
 
     def save(self, *args, **kwargs):
         if not self.booking_reference:
@@ -118,7 +188,9 @@ class Passenger(TimeStampedModel):
     last_name = models.CharField(max_length=60, verbose_name="نام خانوادگی")
     national_id = models.CharField(
         max_length=10,
-        validators=[RegexValidator(r'^\d{10}$', 'کد ملی باید دقیقاً ۱۰ رقم باشد')],
+        # ASCII digits only (\d also matches Persian/Arabic digits) and \Z
+        # instead of $ so a trailing newline is rejected.
+        validators=[RegexValidator(r'^[0-9]{10}\Z', 'کد ملی باید دقیقاً ۱۰ رقم (انگلیسی) باشد')],
         verbose_name="کد ملی"
     )
 
@@ -133,8 +205,9 @@ class Passenger(TimeStampedModel):
 
 class ReservationSeat(TimeStampedModel):
     """
-    پیوند بین یک رزرو و صندلی‌های مشخصی که برای آن رزرو اختصاص یافته‌اند.
-    هر صندلی فقط می‌تواند به یک رزرو تعلق داشته باشد (OneToOne روی seat).
+    The link between a reservation and the specific seats allocated to it.
+    Each seat can belong to only one reservation (OneToOne relationship on the seat).
+    The row is deleted when the reservation is cancelled/expired, which frees the seat.
     """
     reservation = models.ForeignKey(
         Reservation,
