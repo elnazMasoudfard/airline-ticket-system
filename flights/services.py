@@ -27,6 +27,10 @@ def generate_seats_for_flight(flight):
     Output: (Number of seats created, list of classes that already had seats and were skipped)
     """
     with transaction.atomic():
+        # Lock the flight row: a double click (or two managers) can no longer
+        # create the same seats twice, the second call waits and then skips.
+        Flight.objects.select_for_update().get(pk=flight.pk)
+
         seat_classes = list(flight.seat_classes.all())
         seat_classes.sort(key=lambda sc: CLASS_ROW_ORDER.get(sc.class_type, 99))
 
