@@ -15,11 +15,57 @@ from accounts.models import CustomUser
 from flights.models import Flight
 from flights.services import generate_seats_for_flight, sync_flight_statuses
 from tickets.models import Reservation
+from tickets.services import ReservationError, cancel_flight_and_refund
 
 from .forms import FlightForm, SeatClassFormSet
 from .mixins import StaffRequiredMixin
 
 logger = logging.getLogger('dashboard')
+
+STATUS = Reservation.StatusChoices
+MONEY_FIELD = DecimalField(max_digits=14, decimal_places=2)
+ZERO = Decimal('0.00')
+
+
+def reservation_financials(queryset):
+    """
+    Financial summary of a Reservation queryset.
+
+    IMPORTANT: `Reservation.total_paid_price` is filled when the reservation is
+    CREATED (while it is still unpaid), so it must only be summed for
+    reservations that were really paid (`paid_at` is set). Unpaid pending and
+    unpaid cancelled/expired reservations never count as revenue.
+    """
+    now = timezone.now()
+    paid = Q(paid_at__isnull=False)
+    live_pending = Q(status=STATUS.PENDING_PAYMENT, payment_expires_at__gt=now)
+
+    data = queryset.aggregate(
+        gross=Coalesce(Sum('total_paid_price', filter=paid), ZERO, output_field=MONEY_FIELD),
+        refunded=Coalesce(Sum('refund_amount', filter=paid), ZERO, output_field=MONEY_FIELD),
+        pending_amount=Coalesce(
+            Sum('total_paid_price', filter=live_pending), ZERO, output_field=MONEY_FIELD
+        ),
+        pending_count=Count('pk', filter=live_pending),
+        paid_count=Count('pk', filter=Q(status=STATUS.RESERVED)),
+    )
+    data['net'] = data['gross'] - data['refunded']
+    return data
+
+
+def flash_flight_cancel_result(request, flight, result):
+    messages.success(
+        request,
+        f"پرواز {flight.flight_number} لغو شد: {result.refunded_count} رزرو قطعی "
+        f"به مبلغ کل {result.refunded_total:,.0f} تومان به کیف پول کاربران بازگردانده شد "
+        f"و {result.cancelled_pending_count} رزرو پرداخت‌نشده لغو شد.",
+    )
+    if result.failed:
+        messages.error(
+            request,
+            "این رزروها به‌صورت خودکار لغو/مسترد نشدند و باید دستی بررسی شوند: "
+            + "، ".join(result.failed),
+        )
 
 
 class DashboardHomeView(StaffRequiredMixin, View):
@@ -28,36 +74,30 @@ class DashboardHomeView(StaffRequiredMixin, View):
     def get(self, request, *args, **kwargs):
         sync_flight_statuses()
 
-        money_field = DecimalField(max_digits=14, decimal_places=2)
+        paid_only = Q(seat_classes__reservations__paid_at__isnull=False)
 
         flights_financials = (
             Flight.objects
             .select_related('route__origin', 'route__destination')
             .annotate(
                 gross_paid=Coalesce(
-                    Sum('seat_classes__reservations__total_paid_price'), Decimal('0.00'),
-                    output_field=money_field,
+                    Sum('seat_classes__reservations__total_paid_price', filter=paid_only),
+                    ZERO, output_field=MONEY_FIELD,
                 ),
                 total_refunded=Coalesce(
-                    Sum('seat_classes__reservations__refund_amount'), Decimal('0.00'),
-                    output_field=money_field,
+                    Sum('seat_classes__reservations__refund_amount', filter=paid_only),
+                    ZERO, output_field=MONEY_FIELD,
                 ),
             )
             .annotate(
                 net_revenue=ExpressionWrapper(
-                    F('gross_paid') - F('total_refunded'), output_field=money_field
+                    F('gross_paid') - F('total_refunded'), output_field=MONEY_FIELD
                 )
             )
             .order_by('-departure_datetime')
         )
 
-        reservation_totals = Reservation.objects.aggregate(
-            total_gross=Coalesce(Sum('total_paid_price'), Decimal('0.00'), output_field=money_field),
-            total_refunded=Coalesce(Sum('refund_amount'), Decimal('0.00'), output_field=money_field),
-        )
-        total_gross = reservation_totals['total_gross']
-        total_refunded = reservation_totals['total_refunded']
-        total_net = total_gross - total_refunded
+        totals = reservation_financials(Reservation.objects.all())
 
         # Financial table pagination – without this,
         # the entire table would render at once as the number of flights increased.
@@ -67,14 +107,16 @@ class DashboardHomeView(StaffRequiredMixin, View):
         context = {
             'flight_count': Flight.objects.count(),
             'upcoming_flight_count': Flight.objects.upcoming().count(),
-            'active_reservation_count': Reservation.objects.active().count(),
+            'paid_reservation_count': totals['paid_count'],
+            'pending_reservation_count': totals['pending_count'],
+            'pending_amount': totals['pending_amount'],
             'user_count': CustomUser.objects.count(),
             'flights_financials': page_obj,
             'page_obj': page_obj,
             'is_paginated': page_obj.has_other_pages(),
-            'total_gross': total_gross,
-            'total_refunded': total_refunded,
-            'total_net': total_net,
+            'total_gross': totals['gross'],
+            'total_refunded': totals['refunded'],
+            'total_net': totals['net'],
         }
         return render(request, 'dashboard/home.html', context)
 
@@ -91,16 +133,25 @@ class FlightManageListView(StaffRequiredMixin, ListView):
 
     def get_queryset(self):
         sync_flight_statuses()
+        now = timezone.now()
 
         queryset = (
             Flight.objects
             .with_route_info()
             .annotate(
-                active_reservation_count=Count(
+                paid_reservation_count=Count(
                     'seat_classes__reservations',
-                    filter=Q(seat_classes__reservations__status='reserved'),
+                    filter=Q(seat_classes__reservations__status=STATUS.RESERVED),
                     distinct=True,
-                )
+                ),
+                pending_reservation_count=Count(
+                    'seat_classes__reservations',
+                    filter=Q(
+                        seat_classes__reservations__status=STATUS.PENDING_PAYMENT,
+                        seat_classes__reservations__payment_expires_at__gt=now,
+                    ),
+                    distinct=True,
+                ),
             )
             .order_by('-departure_datetime')
         )
@@ -116,7 +167,7 @@ class FlightManageListView(StaffRequiredMixin, ListView):
 
 
 class FlightManageDetailView(StaffRequiredMixin, DetailView):
-    """Flight details for the manager, including a complete list of its bookings (active and cancelled)."""
+    """Flight details for the manager, including a complete list of its bookings (paid, pending and cancelled)."""
     model = Flight
     template_name = 'dashboard/flight_manage_detail.html'
     context_object_name = 'flight'
@@ -131,12 +182,29 @@ class FlightManageDetailView(StaffRequiredMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        flight_reservations = Reservation.objects.filter(seat_class__flight=self.object)
+
         context['reservations'] = (
-            Reservation.objects
-            .filter(seat_class__flight=self.object)
+            flight_reservations
             .select_related('user', 'seat_class')
             .order_by('-created_at')
         )
+        context['financials'] = reservation_financials(flight_reservations)
+
+        # Info for the "cancel flight" box
+        context['can_cancel_flight'] = self.object.status not in (
+            Flight.StatusChoices.CANCELLED,
+            Flight.StatusChoices.COMPLETED,
+        )
+        context['cancel_info'] = {
+            'paid_count': context['financials']['paid_count'],
+            'pending_count': flight_reservations.filter(
+                status=STATUS.PENDING_PAYMENT
+            ).count(),
+            'refundable': flight_reservations.filter(status=STATUS.RESERVED).aggregate(
+                total=Coalesce(Sum('total_paid_price'), ZERO, output_field=MONEY_FIELD)
+            )['total'],
+        }
         return context
 
 
@@ -206,11 +274,46 @@ class FlightEditView(StaffRequiredMixin, View):
 
             logger.info(f"پرواز ویرایش شد توسط مدیر={request.user.username}: {flight.flight_number}")
             messages.success(request, "پرواز با موفقیت به‌روزرسانی شد.")
+
+            # Setting the status to "cancelled" in the form must also cancel
+            # and refund every reservation of this flight.
+            if (
+                'status' in form.changed_data
+                and form.cleaned_data['status'] == Flight.StatusChoices.CANCELLED
+            ):
+                try:
+                    result = cancel_flight_and_refund(flight.pk)
+                except ReservationError as exc:
+                    messages.error(request, str(exc))
+                else:
+                    flash_flight_cancel_result(request, flight, result)
+
             return redirect('dashboard:flight_manage_list')
 
         return render(request, self.template_name, {
             'form': form, 'formset': formset, 'is_edit': True, 'flight': flight,
         })
+
+
+class FlightCancelView(StaffRequiredMixin, View):
+    """Cancel a whole flight: refund every paid reservation and release the unpaid ones."""
+
+    def post(self, request, pk, *args, **kwargs):
+        flight = get_object_or_404(Flight, pk=pk)
+
+        try:
+            result = cancel_flight_and_refund(flight.pk)
+        except ReservationError as exc:
+            messages.error(request, str(exc))
+        else:
+            logger.info(
+                f"لغو پرواز توسط مدیر={request.user.username}: {flight.flight_number} "
+                f"استرداد={result.refunded_count} پرداخت‌نشده={result.cancelled_pending_count} "
+                f"ناموفق={result.failed}"
+            )
+            flash_flight_cancel_result(request, flight, result)
+
+        return redirect('dashboard:flight_manage_detail', pk=flight.pk)
 
 
 class GenerateSeatsView(StaffRequiredMixin, View):
@@ -243,12 +346,26 @@ class GenerateSeatsView(StaffRequiredMixin, View):
 class ReservationManageListView(StaffRequiredMixin, ListView):
     """
     A list of all system reservations (not just those of a specific user).
-    Using `?filter=active` displays only active (non-cancelled) reservations.
+
+    ?filter= values:
+      paid              - confirmed and paid
+      pending           - waiting for payment
+      unpaid_cancelled  - cancelled WITHOUT ever being paid (timeout / user)
+      refunded          - paid and cancelled later (refund issued)
+      active            - pending + paid (kept for old links)
     """
     model = Reservation
     template_name = 'dashboard/reservation_manage_list.html'
     context_object_name = 'reservations'
     paginate_by = 20
+
+    FILTER_TABS = [
+        ('', 'همه'),
+        ('paid', 'قطعی (پرداخت‌شده)'),
+        ('pending', 'در انتظار پرداخت'),
+        ('unpaid_cancelled', 'لغو‌شده بدون پرداخت'),
+        ('refunded', 'لغو‌شده با استرداد'),
+    ]
 
     def get_queryset(self):
         queryset = (
@@ -257,13 +374,24 @@ class ReservationManageListView(StaffRequiredMixin, ListView):
             .with_flight_info()
             .order_by('-created_at')
         )
-        if self.request.GET.get('filter') == 'active':
+
+        current = self.request.GET.get('filter', '')
+        if current == 'active':
             queryset = queryset.active()
+        elif current == 'paid':
+            queryset = queryset.filter(status=STATUS.RESERVED)
+        elif current == 'pending':
+            queryset = queryset.filter(status=STATUS.PENDING_PAYMENT)
+        elif current == 'unpaid_cancelled':
+            queryset = queryset.filter(status=STATUS.CANCELLED, paid_at__isnull=True)
+        elif current == 'refunded':
+            queryset = queryset.filter(status=STATUS.CANCELLED, paid_at__isnull=False)
         return queryset
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['is_active_filter'] = self.request.GET.get('filter') == 'active'
+        context['filter_tabs'] = self.FILTER_TABS
+        context['current_filter'] = self.request.GET.get('filter', '')
         return context
 
 

@@ -1,0 +1,16 @@
+{# وضعیت پرداخت یک رزرو؛ ورودی: reservation #}
+{% if reservation.paid_at %}
+  {% if reservation.status == 'cancelled' %}
+    <span class="badge badge-muted">پرداخت‌شده · لغو و مسترد شد</span>
+  {% else %}
+    <span class="badge badge-success">پرداخت‌شده</span>
+  {% endif %}
+{% elif reservation.status == 'pending_payment' %}
+  {% if reservation.is_payment_expired %}
+    <span class="badge badge-muted">پرداخت‌نشده · مهلت تمام شده (در انتظار لغو خودکار)</span>
+  {% else %}
+    <span class="badge badge-muted">پرداخت‌نشده · تا ساعت {{ reservation.payment_expires_at|date:"H:i" }}</span>
+  {% endif %}
+{% else %}
+  <span class="badge badge-muted">پرداخت‌نشده · {{ reservation.get_cancellation_reason_display|default:"لغو شده" }}</span>
+{% endif %}

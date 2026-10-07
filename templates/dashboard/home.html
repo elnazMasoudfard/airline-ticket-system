@@ -13,9 +13,9 @@
     <span class="profile-card-label">پروازهای آینده</span>
     <span class="profile-card-value mono">{{ upcoming_flight_count }}</span>
   </a>
-  <a href="{% url 'dashboard:reservation_manage_list' %}?filter=active" class="profile-card stat-card-link">
-    <span class="profile-card-label">رزروهای فعال</span>
-    <span class="profile-card-value mono">{{ active_reservation_count }}</span>
+  <a href="{% url 'dashboard:reservation_manage_list' %}?filter=paid" class="profile-card stat-card-link">
+    <span class="profile-card-label">رزروهای قطعی (پرداخت‌شده)</span>
+    <span class="profile-card-value mono">{{ paid_reservation_count }}</span>
   </a>
   <a href="{% url 'dashboard:user_manage_list' %}" class="profile-card stat-card-link">
     <span class="profile-card-label">کل کاربران</span>
@@ -25,20 +25,28 @@
 
 <section class="finance-section">
   <h2 style="font-size: 1.05rem; margin: 0 0 16px; color: var(--color-primary);">مدیریت مالی</h2>
+  <p class="field-hint" style="margin-bottom: 14px;">
+    فقط رزروهایی که واقعاً پرداخت شده‌اند در درآمد حساب می‌شوند. رزروهای در انتظار پرداخت
+    و رزروهای لغو‌شده بدون پرداخت (مثلاً به‌دلیل پایان مهلت) هیچ سهمی در درآمد ندارند.
+  </p>
 
-  <div class="profile-grid" style="grid-template-columns: repeat(3, 1fr); margin-bottom: 20px;">
+  <div class="profile-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 20px;">
     <div class="profile-card">
       <span class="profile-card-label">درآمد ناخالص از فروش بلیط</span>
-      <span class="profile-card-value mono">{{ total_gross|floatformat:0 }} تومان</span>
+      <span class="profile-card-value mono">{{ total_gross|floatformat:"0g" }} تومان</span>
     </div>
     <div class="profile-card">
       <span class="profile-card-label">مبلغ استردادشده (کنسلی‌ها)</span>
-      <span class="profile-card-value mono" style="color: var(--color-danger);">{{ total_refunded|floatformat:0 }} تومان</span>
+      <span class="profile-card-value mono" style="color: var(--color-danger);">{{ total_refunded|floatformat:"0g" }} تومان</span>
     </div>
     <div class="profile-card">
       <span class="profile-card-label">درآمد خالص</span>
-      <span class="profile-card-value mono" style="color: var(--color-success);">{{ total_net|floatformat:0 }} تومان</span>
+      <span class="profile-card-value mono" style="color: var(--color-success);">{{ total_net|floatformat:"0g" }} تومان</span>
     </div>
+    <a href="{% url 'dashboard:reservation_manage_list' %}?filter=pending" class="profile-card stat-card-link">
+      <span class="profile-card-label">در انتظار پرداخت ({{ pending_reservation_count }} رزرو) · جزو درآمد نیست</span>
+      <span class="profile-card-value mono" style="opacity: .7;">{{ pending_amount|floatformat:"0g" }} تومان</span>
+    </a>
   </div>
 
   <div class="dashboard-table-wrap">
@@ -48,7 +56,7 @@
           <th class="mono-header">شماره پرواز</th>
           <th>مسیر</th>
           <th class="mono-header">درآمد ناخالص</th>
-          <th class="mono-header">استردادی</th>
+          <th class="mono-header">استرداد</th>
           <th class="mono-header">درآمد خالص</th>
         </tr>
       </thead>
@@ -57,9 +65,9 @@
           <tr>
             <td class="mono"><a href="{% url 'dashboard:flight_manage_detail' flight.pk %}">{{ flight.flight_number }}</a></td>
             <td>{{ flight.route.origin.city }} ← {{ flight.route.destination.city }}</td>
-            <td class="mono">{{ flight.gross_paid|floatformat:0 }}</td>
-            <td class="mono">{{ flight.total_refunded|floatformat:0 }}</td>
-            <td class="mono">{{ flight.net_revenue|floatformat:0 }}</td>
+            <td class="mono">{{ flight.gross_paid|floatformat:"0g" }}</td>
+            <td class="mono">{{ flight.total_refunded|floatformat:"0g" }}</td>
+            <td class="mono">{{ flight.net_revenue|floatformat:"0g" }}</td>
           </tr>
         {% empty %}
           <tr><td colspan="5">هنوز داده‌ی مالی‌ای ثبت نشده است.</td></tr>

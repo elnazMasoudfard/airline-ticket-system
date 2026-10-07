@@ -10,7 +10,25 @@
   <a href="{% url 'dashboard:flight_edit' flight.pk %}" class="btn btn-primary btn-sm">ویرایش پرواز</a>
 </div>
 
-<div class="profile-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 28px;">
+{% if can_cancel_flight %}
+  <form
+    action="{% url 'dashboard:flight_cancel' flight.pk %}"
+    method="post"
+    class="form-section"
+    onsubmit="return confirm('پرواز لغو می‌شود، رزروهای قطعی کامل مسترد و رزروهای پرداخت‌نشده آزاد می‌شوند. این کار برگشت‌پذیر نیست. ادامه می‌دهید؟');"
+  >
+    {% csrf_token %}
+    <h2>لغو پرواز</h2>
+    <p class="field-hint" style="margin-bottom: 14px;">
+      با لغو پرواز، {{ cancel_info.paid_count }} رزرو قطعی به مبلغ کل
+      {{ cancel_info.refundable|floatformat:"0g" }} تومان بدون جریمه به کیف پول کاربران بازگردانده می‌شود
+      و {{ cancel_info.pending_count }} رزرو پرداخت‌نشده لغو می‌شود.
+    </p>
+    <button type="submit" class="btn btn-danger btn-sm">لغو پرواز و استرداد وجه همه‌ی رزروها</button>
+  </form>
+{% endif %}
+
+<div class="profile-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 20px;">
   <div class="profile-card">
     <span class="profile-card-label">مسیر</span>
     <span class="profile-card-value">{{ flight.route.origin.city }} ← {{ flight.route.destination.city }}</span>
@@ -29,6 +47,25 @@
   </div>
 </div>
 
+<div class="profile-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 28px;">
+  <div class="profile-card">
+    <span class="profile-card-label">درآمد ناخالص (پرداخت‌شده‌ها)</span>
+    <span class="profile-card-value mono">{{ financials.gross|floatformat:"0g" }} تومان</span>
+  </div>
+  <div class="profile-card">
+    <span class="profile-card-label">استرداد</span>
+    <span class="profile-card-value mono" style="color: var(--color-danger);">{{ financials.refunded|floatformat:"0g" }} تومان</span>
+  </div>
+  <div class="profile-card">
+    <span class="profile-card-label">درآمد خالص</span>
+    <span class="profile-card-value mono" style="color: var(--color-success);">{{ financials.net|floatformat:"0g" }} تومان</span>
+  </div>
+  <div class="profile-card">
+    <span class="profile-card-label">در انتظار پرداخت ({{ financials.pending_count }} رزرو) · جزو درآمد نیست</span>
+    <span class="profile-card-value mono" style="opacity: .7;">{{ financials.pending_amount|floatformat:"0g" }} تومان</span>
+  </div>
+</div>
+
 <h2 style="font-size: 1rem; margin-bottom: 12px;">کلاس‌های صندلی</h2>
 <div class="dashboard-table-wrap" style="margin-bottom: 28px;">
   <table class="dashboard-table">
@@ -41,7 +78,7 @@
           <td>{{ seat_class.get_class_type_display }}</td>
           <td class="mono">{{ seat_class.capacity }}</td>
           <td class="mono">{{ seat_class.available_seats }}</td>
-          <td class="mono">{{ seat_class.final_price|floatformat:0 }} تومان</td>
+          <td class="mono">{{ seat_class.final_price|floatformat:"0g" }} تومان</td>
         </tr>
       {% empty %}
         <tr><td colspan="4">کلاس صندلی‌ای ثبت نشده است.</td></tr>
@@ -55,7 +92,15 @@
   <table class="dashboard-table">
     <thead>
       <tr>
-        <th class="mono-header">کد رزرو</th><th>کاربر</th><th>کلاس</th><th class="mono-header">تعداد صندلی</th><th class="mono-header">مبلغ</th><th>وضعیت</th><th></th>
+        <th class="mono-header">کد رزرو</th>
+        <th>کاربر</th>
+        <th>کلاس</th>
+        <th class="mono-header">تعداد صندلی</th>
+        <th class="mono-header">مبلغ رزرو</th>
+        <th>وضعیت</th>
+        <th>پرداخت</th>
+        <th class="mono-header">استرداد</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
@@ -65,16 +110,22 @@
           <td>{{ reservation.user.username }}</td>
           <td>{{ reservation.seat_class.get_class_type_display }}</td>
           <td class="mono">{{ reservation.seats_count }}</td>
-          <td class="mono">{{ reservation.total_paid_price|floatformat:0 }}</td>
+          <td class="mono"{% if not reservation.paid_at %} style="opacity: .5;" title="پرداخت نشده"{% endif %}>{{ reservation.total_paid_price|floatformat:"0g" }}</td>
           <td>
             {% reservation_status_badge reservation %}
+          </td>
+          <td>
+            {% include 'dashboard/_payment_status.html' %}
+          </td>
+          <td class="mono">
+            {% if reservation.paid_at and reservation.status == 'cancelled' %}{{ reservation.refund_amount|floatformat:"0g" }}{% else %}—{% endif %}
           </td>
           <td>
             <a href="/admin/tickets/reservation/{{ reservation.pk }}/change/" target="_blank" class="btn btn-ghost btn-sm">مشاهده</a>
           </td>
         </tr>
       {% empty %}
-        <tr><td colspan="7">هنوز رزروی برای این پرواز ثبت نشده است.</td></tr>
+        <tr><td colspan="9">هنوز رزروی برای این پرواز ثبت نشده است.</td></tr>
       {% endfor %}
     </tbody>
   </table>

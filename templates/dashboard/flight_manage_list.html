@@ -27,7 +27,8 @@
         <th>حرکت</th>
         <th>وضعیت</th>
         <th class="mono-header">ظرفیت باقی‌مانده</th>
-        <th class="mono-header">رزرو فعال</th>
+        <th class="mono-header">رزرو قطعی</th>
+        <th class="mono-header">در انتظار پرداخت</th>
         <th></th>
       </tr>
     </thead>
@@ -47,14 +48,15 @@
             {% flight_status_badge flight %}
           </td>
           <td class="mono">{{ flight.total_available_seats }}</td>
-          <td class="mono">{{ flight.active_reservation_count }}</td>
+          <td class="mono">{{ flight.paid_reservation_count }}</td>
+          <td class="mono" style="opacity: .7;">{{ flight.pending_reservation_count }}</td>
           <td style="display:flex; gap:6px;">
             <a href="{% url 'dashboard:flight_manage_detail' flight.pk %}" class="btn btn-ghost btn-sm">مشاهده</a>
             <a href="{% url 'dashboard:flight_edit' flight.pk %}" class="btn btn-ghost btn-sm">ویرایش</a>
           </td>
         </tr>
       {% empty %}
-        <tr><td colspan="8">هنوز پروازی ثبت نشده است.</td></tr>
+        <tr><td colspan="9">هنوز پروازی ثبت نشده است.</td></tr>
       {% endfor %}
     </tbody>
   </table>

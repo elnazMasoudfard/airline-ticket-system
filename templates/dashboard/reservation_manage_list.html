@@ -4,14 +4,16 @@
 
 {% block content %}
 <div class="dashboard-toolbar">
-  <h1 class="page-title" style="margin-bottom: 0;">
-    مدیریت رزروها {% if is_active_filter %}<span class="badge badge-muted">فقط فعال</span>{% endif %}
-  </h1>
-  {% if is_active_filter %}
-    <a href="{% url 'dashboard:reservation_manage_list' %}" class="btn btn-ghost btn-sm">نمایش همه (شامل کنسل‌شده)</a>
-  {% else %}
-    <a href="{% url 'dashboard:reservation_manage_list' %}?filter=active" class="btn btn-ghost btn-sm">فقط رزروهای فعال</a>
-  {% endif %}
+  <h1 class="page-title" style="margin-bottom: 0;">مدیریت رزروها</h1>
+</div>
+
+<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom: 18px;">
+  {% for key, label in filter_tabs %}
+    <a
+      href="{% url 'dashboard:reservation_manage_list' %}{% if key %}?filter={{ key }}{% endif %}"
+      class="btn btn-sm {% if key == current_filter %}btn-primary{% else %}btn-ghost{% endif %}"
+    >{{ label }}</a>
+  {% endfor %}
 </div>
 
 <div class="dashboard-table-wrap">
@@ -23,8 +25,10 @@
         <th class="mono-header">پرواز</th>
         <th>مسیر</th>
         <th class="mono-header">تعداد صندلی</th>
-        <th class="mono-header">مبلغ</th>
+        <th class="mono-header">مبلغ رزرو</th>
         <th>وضعیت</th>
+        <th>پرداخت</th>
+        <th class="mono-header">استرداد</th>
         <th></th>
       </tr>
     </thead>
@@ -36,16 +40,22 @@
           <td class="mono">{{ reservation.seat_class.flight.flight_number }}</td>
           <td>{{ reservation.seat_class.flight.route.origin.city }} ← {{ reservation.seat_class.flight.route.destination.city }}</td>
           <td class="mono">{{ reservation.seats_count }}</td>
-          <td class="mono">{{ reservation.total_paid_price|floatformat:0 }}</td>
+          <td class="mono"{% if not reservation.paid_at %} style="opacity: .5;" title="پرداخت نشده"{% endif %}>{{ reservation.total_paid_price|floatformat:"0g" }}</td>
           <td>
             {% reservation_status_badge reservation %}
+          </td>
+          <td>
+            {% include 'dashboard/_payment_status.html' %}
+          </td>
+          <td class="mono">
+            {% if reservation.paid_at and reservation.status == 'cancelled' %}{{ reservation.refund_amount|floatformat:"0g" }}{% else %}—{% endif %}
           </td>
           <td>
             <a href="/admin/tickets/reservation/{{ reservation.pk }}/change/" target="_blank" class="btn btn-ghost btn-sm">مشاهده</a>
           </td>
         </tr>
       {% empty %}
-        <tr><td colspan="8">رزروی ثبت نشده است.</td></tr>
+        <tr><td colspan="10">رزروی ثبت نشده است.</td></tr>
       {% endfor %}
     </tbody>
   </table>
