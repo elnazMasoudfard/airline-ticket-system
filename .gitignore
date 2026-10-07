@@ -9,3 +9,6 @@ staticfiles/
 .vscode/
 .idea/
 *.log
+*.backup
+expire_log.txt
+run_expire.bat
