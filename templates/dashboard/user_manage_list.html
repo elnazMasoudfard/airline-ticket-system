@@ -23,7 +23,7 @@
           <td>{{ u.username }}</td>
           <td>{{ u.email|default:"—" }}</td>
           <td class="mono">{{ u.phone_number|default:"—" }}</td>
-          <td class="mono">{{ u.wallet_balance|floatformat:0 }} تومان</td>
+          <td class="mono">{{ u.wallet_balance|floatformat:"0g" }} تومان</td>
           <td>{{ u.date_joined|date:"Y/m/d" }}</td>
           <td>
             {% if u.is_staff %}
