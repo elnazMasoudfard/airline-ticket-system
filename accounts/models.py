@@ -1,12 +1,16 @@
+import logging
 import secrets
 from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.core.validators import MinValueValidator, RegexValidator
-from django.db import models
-from django.db.models import F
+from django.db import models, transaction
 from django.utils import timezone
+
+from core.models import TimeStampedModel
+
+logger = logging.getLogger('accounts')
 
 
 class CustomUserManager(BaseUserManager):
@@ -71,35 +75,157 @@ class CustomUser(AbstractUser):
     def __str__(self):
         return f"{self.username} ({self.get_full_name() or 'بدون نام'})"
 
-    def deposit(self, amount: Decimal) -> None:
-        """شارژ کیف پول به‌صورت اتمیک."""
+    # ------------------------------------------------------------------
+    # Wallet. EVERY balance change must go through deposit()/withdraw(),
+    # so that it is applied atomically AND recorded in WalletTransaction.
+    # ------------------------------------------------------------------
+    def _apply_wallet_change(self, delta, kind, reference, description):
+        """
+        Lock the user row, change the balance and write the ledger entry in one
+        transaction. `delta` is positive for a deposit and negative for a
+        withdrawal. Raises ValueError when the balance would become negative.
+        """
+        delta = Decimal(str(delta)).quantize(Decimal('0.01'))
+
+        with transaction.atomic():
+            locked = CustomUser.objects.select_for_update().get(pk=self.pk)
+            balance_before = locked.wallet_balance
+            balance_after = balance_before + delta
+
+            if balance_after < 0:
+                raise ValueError("موجودی کیف پول کافی نیست.")
+
+            CustomUser.objects.filter(pk=self.pk).update(wallet_balance=balance_after)
+            entry = WalletTransaction.objects.create(
+                user=locked,
+                kind=kind,
+                amount=delta,
+                balance_before=balance_before,
+                balance_after=balance_after,
+                reference=reference,
+                description=description,
+            )
+
+            # Written to the log only after the whole transaction committed.
+            transaction.on_commit(lambda: self._log_wallet_entry(entry))
+
+        self.wallet_balance = balance_after
+        return entry
+
+    def _log_wallet_entry(self, entry):
+        Kind = WalletTransaction.KindChoices
+        labels = {
+            Kind.CHARGE: "شارژ کیف پول",
+            Kind.PAYMENT: "برداشت از کیف پول (پرداخت بلیت)",
+            Kind.REFUND: "بازگشت وجه به کیف پول",
+            Kind.ADJUSTMENT: "اصلاح دستی کیف پول",
+        }
+        message = (
+            f"{labels.get(entry.kind, entry.kind)}: user={self.username}, "
+            f"amount={abs(entry.amount)}, new_balance={entry.balance_after}"
+        )
+        if entry.reference:
+            message += f", reference={entry.reference}"
+        logger.info(message)
+
+    def deposit(self, amount, *, kind=None, reference='', description=''):
+        """شارژ/واریز به کیف پول به‌صورت اتمیک؛ هر واریز یک تراکنش ثبت می‌کند."""
+        amount = Decimal(str(amount))
         if amount <= 0:
             raise ValueError("مبلغ شارژ باید بیشتر از صفر باشد.")
-        CustomUser.objects.filter(pk=self.pk).update(
-            wallet_balance=F('wallet_balance') + amount
+        return self._apply_wallet_change(
+            amount,
+            kind or WalletTransaction.KindChoices.CHARGE,
+            reference,
+            description,
         )
-        self.refresh_from_db(fields=['wallet_balance'])
 
-    def withdraw(self, amount: Decimal) -> None:
+    def withdraw(self, amount, *, kind=None, reference='', description=''):
         """
-        کسر از کیف پول به‌صورت اتمیک.
-        از موجودی منفی و race condition (دو تراکنش هم‌زمان) جلوگیری می‌کند.
+        Atomic wallet deduction (never produces a negative balance, safe against
+        simultaneous transactions). Every withdrawal writes one ledger entry.
         """
+        amount = Decimal(str(amount))
         if amount <= 0:
             raise ValueError("مبلغ برداشت باید بیشتر از صفر باشد.")
-        updated = CustomUser.objects.filter(
-            pk=self.pk, wallet_balance__gte=amount
-        ).update(wallet_balance=F('wallet_balance') - amount)
-        if not updated:
-            raise ValueError("موجودی کیف پول کافی نیست.")
-        self.refresh_from_db(fields=['wallet_balance'])
+        return self._apply_wallet_change(
+            -amount,
+            kind or WalletTransaction.KindChoices.PAYMENT,
+            reference,
+            description,
+        )
+
+
+class WalletTransaction(TimeStampedModel):
+    """
+    Append-only ledger of every wallet change.
+    Invariant: balance_after == balance_before + amount.
+    `amount` is positive for money coming in and negative for money going out.
+    `reference` is the related booking reference (PNR), if any; it is a plain
+    text field so that accounts does not depend on the tickets app.
+    """
+
+    class KindChoices(models.TextChoices):
+        CHARGE = 'charge', 'شارژ کیف پول'
+        PAYMENT = 'payment', 'پرداخت بلیت'
+        REFUND = 'refund', 'استرداد'
+        ADJUSTMENT = 'adjustment', 'اصلاح دستی'
+
+    user = models.ForeignKey(
+        CustomUser,
+        on_delete=models.PROTECT,
+        related_name='wallet_transactions',
+        verbose_name="کاربر"
+    )
+    kind = models.CharField(
+        max_length=20,
+        choices=KindChoices.choices,
+        verbose_name="نوع تراکنش"
+    )
+    amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        verbose_name="مبلغ (مثبت = واریز، منفی = برداشت)"
+    )
+    balance_before = models.DecimalField(
+        max_digits=12, decimal_places=2, verbose_name="موجودی قبل"
+    )
+    balance_after = models.DecimalField(
+        max_digits=12, decimal_places=2, verbose_name="موجودی بعد"
+    )
+    reference = models.CharField(
+        max_length=40,
+        blank=True,
+        db_index=True,
+        verbose_name="کد رزرو مرتبط"
+    )
+    description = models.CharField(max_length=200, blank=True, verbose_name="توضیح")
+
+    class Meta:
+        verbose_name = "تراکنش کیف پول"
+        verbose_name_plural = "تراکنش‌های کیف پول"
+        ordering = ['-created_at', '-id']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValueError("تراکنش‌های کیف پول قابل ویرایش نیستند.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("تراکنش‌های کیف پول قابل حذف نیستند.")
+
+    def __str__(self):
+        return f"{self.user.username} · {self.get_kind_display()} · {self.amount}"
 
 
 class PhoneVerificationCode(models.Model):
     """
-    کد یک‌بارمصرف ۶ رقمی برای تایید شماره موبایل کاربر.
-    چون درگاه پیامک واقعی نداریم، ارسال آن شبیه‌سازی‌شده و در کنسول/لاگ سرور چاپ می‌شود.
-    حداکثر ۱۰ دقیقه اعتبار دارد.
+    A 6-digit one-time code to verify the user's mobile number.
+    Since there is no actual SMS gateway, the sending process is simulated, and the code is printed to the console/server log.
+    It is valid for a maximum of 10 minutes.
     """
     user = models.ForeignKey(
         CustomUser,
@@ -139,8 +265,8 @@ class PhoneVerificationCode(models.Model):
 
 class EmailVerificationToken(models.Model):
     """
-    توکن یک‌بارمصرف برای تایید ایمیل کاربر از طریق لینکی که به ایمیلش ارسال می‌شود.
-    هر توکن حداکثر ۲۴ ساعت اعتبار دارد و فقط یک‌بار قابل استفاده است.
+    A one-time token for verifying the user's email via a link sent to their email address.
+    Each token is valid for a maximum of 24 hours and can be used only once.
     """
     user = models.ForeignKey(
         CustomUser,
