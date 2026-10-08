@@ -14,7 +14,8 @@ from django.utils import timezone
 from django.views.generic import DetailView, FormView, UpdateView, View
 
 from .forms import DepositForm, LoginForm, PhoneVerificationForm, ProfileEditForm, RegistrationForm
-from .models import CustomUser, EmailVerificationToken, PhoneVerificationCode
+from .models import CustomUser, EmailVerificationToken, PhoneVerificationCode, WalletTransaction
+from .utils import get_client_ip, sanitize_for_log
 
 # For UTF-8 emails with short lines, Django uses its own internal Charset object (utf8_charset)
 # with body_encoding=None—effectively BASE64—regardless of the global email.charset setting.
@@ -88,7 +89,9 @@ class RegisterView(FormView):
         send_verification_email(self.request, user)
         login(self.request, user)
         logger.info(f"کاربر جدید ثبت‌نام کرد: username={user.username}, email={user.email}")
-        security_logger.info(f"ورود پس از ثبت‌نام: username={user.username}")
+        security_logger.info(
+            f"ورود پس از ثبت‌نام: username={user.username}, ip={get_client_ip(self.request)}"
+        )
         messages.success(
             self.request,
             "ثبت‌نام با موفقیت انجام شد. لینک فعال‌سازی به ایمیل شما ارسال گردید."
@@ -171,7 +174,10 @@ class RequestPhoneVerificationView(LoginRequiredMixin, View):
         cache_key = self._attempts_cache_key(request.user)
         attempts = cache.get(cache_key, 0)
         if attempts >= self.MAX_ATTEMPTS:
-            security_logger.warning(f"قفل موقت تایید پیامکی به‌خاطر تلاش زیاد: user={request.user.username}")
+            security_logger.warning(
+                f"قفل موقت تایید پیامکی به‌خاطر تلاش زیاد: "
+                f"user={request.user.username}, ip={get_client_ip(request)}"
+            )
             messages.error(
                 request,
                 "به‌خاطر تلاش‌های ناموفق زیاد، برای چند دقیقه امکان تایید کد وجود ندارد."
@@ -190,7 +196,9 @@ class RequestPhoneVerificationView(LoginRequiredMixin, View):
 
             if verification is None:
                 cache.set(cache_key, attempts + 1, timeout=self.LOCKOUT_SECONDS)
-                security_logger.warning(f"کد تایید پیامکی اشتباه: user={request.user.username}")
+                security_logger.warning(
+                    f"کد تایید پیامکی اشتباه: user={request.user.username}, ip={get_client_ip(request)}"
+                )
                 messages.error(request, "کد وارد‌شده اشتباه است.")
             elif verification.is_expired:
                 messages.error(request, "کد منقضی شده است. دوباره درخواست بدهید.")
@@ -227,18 +235,25 @@ class LoginView(FormView):
                 user = authenticate(self.request, username=matched_user.username, password=password)
 
         if user is None:
-            security_logger.warning(f"تلاش ناموفق برای ورود: identifier={identifier}")
+            security_logger.warning(
+                f"تلاش ناموفق برای ورود: identifier={sanitize_for_log(identifier)}, "
+                f"ip={get_client_ip(self.request)}"
+            )
             form.add_error(None, "نام کاربری/ایمیل یا رمز عبور اشتباه است.")
             return self.form_invalid(form)
 
-        security_logger.info(f"ورود موفق کاربر: username={user.username}")
+        security_logger.info(
+            f"ورود موفق کاربر: username={user.username}, ip={get_client_ip(self.request)}"
+        )
         login(self.request, user)
         return super().form_valid(form)
 
 
 class LogoutView(LoginRequiredMixin, View):
     def post(self, request, *args, **kwargs):
-        security_logger.info(f"خروج کاربر: username={request.user.username}")
+        security_logger.info(
+            f"خروج کاربر: username={request.user.username}, ip={get_client_ip(request)}"
+        )
         logout(request)
         return redirect('accounts:login')
 
@@ -300,10 +315,11 @@ class DepositView(LoginRequiredMixin, FormView):
 
     def form_valid(self, form):
         amount = form.cleaned_data['amount']
-        self.request.user.deposit(amount)
-        logger.info(
-            f"شارژ کیف پول: user={self.request.user.username}, amount={amount}, "
-            f"new_balance={self.request.user.wallet_balance}"
+        # deposit() writes the WalletTransaction and the "شارژ کیف پول" log line.
+        self.request.user.deposit(
+            amount,
+            kind=WalletTransaction.KindChoices.CHARGE,
+            description="شارژ شبیه‌سازی‌شده (بدون درگاه پرداخت واقعی)",
         )
         messages.success(
             self.request,
