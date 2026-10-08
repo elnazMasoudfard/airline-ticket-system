@@ -31,6 +31,7 @@ from .services import (
     expire_reservation_if_needed,
     get_penalty_percent,
     has_adjacent_block,
+    log_rejected,
     is_flight_bookable,
     pay_reservation,
     pending_limit_reached,
@@ -89,7 +90,7 @@ class ReservationListView(LoginRequiredMixin, ListView):
             .values_list('pk', flat=True)
         )
         for pk in overdue_ids:
-            expire_reservation(pk)
+            expire_reservation(pk, source='لیست رزروها')
 
     def get_queryset(self):
         self.expire_overdue()
@@ -222,10 +223,21 @@ class ReservationCreateView(LoginRequiredMixin, View):
     def check_can_book(self, request, seat_class):
         """Returns a redirect response if booking is not possible, else None."""
         if not is_flight_bookable(seat_class.flight):
+            log_rejected(
+                'رزرو', 'پرواز قابل رزرو نیست',
+                user=request.user.username,
+                flight=seat_class.flight.flight_number,
+                flight_status=seat_class.flight.status,
+            )
             messages.error(request, FLIGHT_NOT_BOOKABLE_MSG)
             return redirect('flights:flight_detail', pk=seat_class.flight_id)
 
         if pending_limit_reached(request.user):
+            log_rejected(
+                'رزرو', 'سقف رزروهای در انتظار پرداخت',
+                user=request.user.username,
+                limit=MAX_PENDING_RESERVATIONS_PER_USER,
+            )
             messages.error(
                 request,
                 f"شما {MAX_PENDING_RESERVATIONS_PER_USER} رزرو در انتظار پرداخت دارید. "
@@ -260,14 +272,20 @@ class ReservationCreateView(LoginRequiredMixin, View):
         # Informational pre-checks. The real, locked checks happen in the
         # seat selection step (create_pending_reservation).
         if seat_class.available_seats < seats_count:
-            logger.warning(
-                "insufficient capacity: user=%s seat_class=%s requested=%s available=%s",
-                request.user.pk, seat_class.pk, seats_count, seat_class.available_seats,
+            log_rejected(
+                'رزرو', 'ظرفیت ناکافی',
+                user=request.user.username, seat_class=seat_class.pk,
+                requested=seats_count, available=seat_class.available_seats,
             )
             messages.error(request, "ظرفیت کافی برای این تعداد صندلی وجود ندارد.")
             return self.render_form(request, seat_class, form)
 
         if not has_adjacent_block(seat_class, seats_count):
+            log_rejected(
+                'رزرو', 'صندلی پیوسته برای گروه باقی نمانده',
+                user=request.user.username, seat_class=seat_class.pk,
+                requested=seats_count,
+            )
             messages.error(
                 request,
                 "برای این تعداد مسافر، صندلی‌های پیوسته در یک ردیف باقی نمانده است. "
@@ -331,7 +349,7 @@ class SeatSelectionView(LoginRequiredMixin, View):
         )
 
         if not context['seats'].exists():
-            logger.warning("seat map missing: seat_class=%s", seat_class.pk)
+            logger.warning("نقشه‌ی صندلی موجود نیست: seat_class=%s", seat_class.pk)
             messages.error(
                 request,
                 "برای این کلاس پروازی هنوز نقشه‌ی صندلی تعریف نشده است. "
@@ -368,8 +386,8 @@ class SeatSelectionView(LoginRequiredMixin, View):
         except IntegrityError:
             # e.g. a PNR collision or a seat that got linked in the meantime
             logger.exception(
-                "integrity error while creating reservation: user=%s seat_class=%s",
-                request.user.pk, seat_class.pk,
+                "خطای یکپارچگی دیتابیس هنگام ساخت رزرو: user=%s, seat_class=%s",
+                request.user.username, seat_class.pk,
             )
             messages.error(
                 request,
@@ -561,8 +579,8 @@ class AddPassengersView(LoginRequiredMixin, View):
 
         except IntegrityError:
             logger.exception(
-                "db error while saving passengers: ref=%s user=%s",
-                kwargs['booking_reference'], request.user.pk,
+                "خطای دیتابیس هنگام ثبت اطلاعات مسافران: booking_reference=%s, user=%s",
+                kwargs['booking_reference'], request.user.username,
             )
             messages.error(
                 request,
@@ -573,13 +591,14 @@ class AddPassengersView(LoginRequiredMixin, View):
 
         except ValueError:
             logger.exception(
-                "passenger count mismatch: ref=%s", kwargs['booking_reference']
+                "عدم تطابق تعداد مسافران با تعداد صندلی‌ها: booking_reference=%s, user=%s",
+                kwargs['booking_reference'], request.user.username,
             )
             messages.error(request, "ثبت اطلاعات کامل نشد. لطفاً دوباره تلاش کنید.")
             return self.render_fresh_form(request)
 
         logger.info(
-            "passengers saved: ref=%s count=%s",
+            "اطلاعات مسافران ثبت شد: booking_reference=%s, passenger_count=%s",
             reservation.booking_reference, reservation.seats_count,
         )
         messages.success(request, "اطلاعات مسافران با موفقیت ثبت شد.")

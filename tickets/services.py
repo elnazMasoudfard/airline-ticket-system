@@ -21,6 +21,7 @@ from django.db import transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
+from accounts.models import WalletTransaction
 from flights.models import Flight, Seat, SeatClass
 
 from .models import Reservation, ReservationSeat
@@ -83,6 +84,29 @@ class CancelOutcome:
     reservation: Reservation
     refund_amount: Decimal
     penalty_percent: Decimal
+
+
+# ---------------------------------------------------------------------------
+# Logging helpers (one consistent Persian format: key=value pairs, user=<username>)
+# ---------------------------------------------------------------------------
+def _fmt(**fields):
+    return ", ".join(f"{key}={value}" for key, value in fields.items())
+
+
+def log_rejected(action, reason, level=logging.WARNING, **fields):
+    """One line for every refused operation, e.g. «پرداخت رد شد (مهلت پرداخت تمام شده): ...»."""
+    logger.log(level, "%s رد شد (%s): %s", action, reason, _fmt(**fields))
+
+
+def _log_expired(reservation, username, source):
+    logger.info(
+        "رزرو منقضی شد: %s",
+        _fmt(
+            booking_reference=reservation.booking_reference,
+            user=username,
+            source=source,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -181,14 +205,21 @@ def create_pending_reservation(*, user, seat_class_id, seat_ids, seats_count):
     message; nothing is written in that case.
     """
     seat_ids = list(seat_ids)
+    username = user.username
 
     if not 1 <= seats_count <= MAX_SEATS_PER_RESERVATION:
+        log_rejected('رزرو', 'تعداد صندلی نامعتبر', user=username, requested=seats_count)
         raise BookingError(
             f"تعداد صندلی باید بین ۱ تا {MAX_SEATS_PER_RESERVATION} باشد."
         )
     if len(seat_ids) != seats_count:
+        log_rejected(
+            'رزرو', 'تعداد صندلی انتخابی با تعداد درخواستی برابر نیست',
+            user=username, requested=seats_count, selected=len(seat_ids),
+        )
         raise BookingError(f"لطفاً دقیقاً {seats_count} صندلی انتخاب کنید.")
     if len(set(seat_ids)) != len(seat_ids):
+        log_rejected('رزرو', 'صندلی تکراری در انتخاب', user=username, seat_ids=seat_ids)
         raise BookingError("یک صندلی بیش از یک‌بار انتخاب شده است.")
 
     with transaction.atomic():
@@ -196,15 +227,28 @@ def create_pending_reservation(*, user, seat_class_id, seat_ids, seats_count):
         flight = seat_class.flight
 
         if not is_flight_bookable(flight):
+            log_rejected(
+                'رزرو', 'پرواز قابل رزرو نیست',
+                user=username, flight=flight.flight_number, flight_status=flight.status,
+            )
             raise FlightNotBookableError("این پرواز در حال حاضر قابل رزرو نیست.")
 
         if pending_limit_reached(user):
+            log_rejected(
+                'رزرو', 'سقف رزروهای در انتظار پرداخت',
+                user=username, limit=MAX_PENDING_RESERVATIONS_PER_USER,
+            )
             raise BookingError(
                 f"شما در حال حاضر {MAX_PENDING_RESERVATIONS_PER_USER} رزرو "
                 "در انتظار پرداخت دارید. ابتدا آن‌ها را پرداخت یا لغو کنید."
             )
 
         if seat_class.available_seats < seats_count:
+            log_rejected(
+                'رزرو', 'ظرفیت ناکافی',
+                user=username, seat_class=seat_class.pk,
+                requested=seats_count, available=seat_class.available_seats,
+            )
             raise BookingError("ظرفیت کافی برای این تعداد صندلی وجود ندارد.")
 
         # Seats are always locked ordered by id, so two users choosing
@@ -215,16 +259,23 @@ def create_pending_reservation(*, user, seat_class_id, seat_ids, seats_count):
             .order_by('id')
         )
         if len(seats) != seats_count:
-            logger.warning(
-                "seat conflict: user=%s seat_class=%s requested=%s",
-                user.pk, seat_class.pk, seat_ids,
+            log_rejected(
+                'رزرو', 'صندلی در دسترس نیست (تداخل با رزرو دیگر)',
+                user=username, seat_class=seat_class.pk, seat_ids=seat_ids,
             )
             raise BookingError(
                 "متاسفانه یک یا چند صندلی انتخابی شما در دسترس نیست "
                 "(ممکن است کاربر دیگری آن را رزرو کرده باشد). لطفاً دوباره انتخاب کنید."
             )
 
-        validate_group_seats(seats)
+        try:
+            validate_group_seats(seats)
+        except BookingError:
+            log_rejected(
+                'رزرو', 'صندلی‌های گروهی کنار هم نیستند',
+                user=username, seat_class=seat_class.pk, seat_ids=seat_ids,
+            )
+            raise
 
         now = timezone.now()
 
@@ -251,10 +302,15 @@ def create_pending_reservation(*, user, seat_class_id, seat_ids, seats_count):
         ])
 
     logger.info(
-        "reservation created: ref=%s user=%s flight=%s seats=%s total=%s seat_numbers=%s",
-        reservation.booking_reference, user.pk, flight.flight_number,
-        seats_count, reservation.total_paid_price,
-        [seat.seat_number for seat in seats],
+        "رزرو جدید ثبت شد: %s",
+        _fmt(
+            booking_reference=reservation.booking_reference,
+            user=username,
+            flight=flight.flight_number,
+            seats=seats_count,
+            total_price=reservation.total_paid_price,
+            seat_numbers=[seat.seat_number for seat in seats],
+        ),
     )
     return reservation
 
@@ -294,8 +350,11 @@ def _cancel_locked(reservation, reason, refund_amount=Decimal('0.00')):
     )
 
 
-def expire_reservation(reservation_pk):
-    """Cancel one pending reservation if its payment window is over."""
+def expire_reservation(reservation_pk, source='تسک زمان‌بندی'):
+    """
+    Cancel one pending reservation if its payment window is over.
+    `source` only tells the log who triggered the expiry.
+    """
     with transaction.atomic():
         reservation = (
             Reservation.objects.select_for_update().filter(pk=reservation_pk).first()
@@ -305,15 +364,16 @@ def expire_reservation(reservation_pk):
             return False
 
         _cancel_locked(reservation, Reservation.CancellationReason.TIMEOUT)
+        username = reservation.user.username
 
-    logger.info("reservation expired: ref=%s", reservation.booking_reference)
+    _log_expired(reservation, username, source)
     return True
 
 
-def expire_reservation_if_needed(reservation):
+def expire_reservation_if_needed(reservation, source='باز شدن صفحه'):
     """Lazy expiry used by views so users never see stale pending reservations."""
     if reservation.is_payment_expired:
-        return expire_reservation(reservation.pk)
+        return expire_reservation(reservation.pk, source=source)
     return False
 
 
@@ -349,6 +409,10 @@ def cancel_reservation(*, booking_reference, user):
         )
 
         if reservation.status == Reservation.StatusChoices.CANCELLED:
+            log_rejected(
+                'لغو', 'رزرو قبلاً لغو شده است', level=logging.INFO,
+                booking_reference=booking_reference, user=user.username,
+            )
             raise AlreadyCancelledError("این رزرو قبلاً کنسل شده است.")
 
         flight = reservation.seat_class.flight
@@ -359,6 +423,11 @@ def cancel_reservation(*, booking_reference, user):
             and flight.departure_datetime > timezone.now()
         )
         if not can_cancel:
+            log_rejected(
+                'لغو', 'وضعیت یا زمان پرواز اجازه‌ی لغو نمی‌دهد',
+                booking_reference=booking_reference, user=user.username,
+                flight=flight.flight_number, flight_status=flight.status,
+            )
             raise CancellationNotAllowedError(
                 "لغو این رزرو به دلیل وضعیت یا زمان پرواز امکان‌پذیر نیست."
             )
@@ -386,12 +455,23 @@ def cancel_reservation(*, booking_reference, user):
         if refund_amount > 0:
             # Lock the wallet row exactly like the payment does.
             wallet_user = get_user_model().objects.select_for_update().get(pk=user.pk)
-            wallet_user.deposit(refund_amount)
+            wallet_user.deposit(
+                refund_amount,
+                kind=WalletTransaction.KindChoices.REFUND,
+                reference=reservation.booking_reference,
+                description=f"استرداد رزرو {reservation.booking_reference} (پرواز {flight.flight_number})",
+            )
 
     logger.info(
-        "reservation cancelled: ref=%s user=%s flight=%s penalty=%s refund=%s",
-        reservation.booking_reference, user.pk, flight.flight_number,
-        penalty_percent, refund_amount,
+        "رزرو کنسل شد: %s",
+        _fmt(
+            booking_reference=reservation.booking_reference,
+            user=user.username,
+            flight=flight.flight_number,
+            penalty_percent=penalty_percent,
+            refund_amount=refund_amount,
+            reason=reservation.get_cancellation_reason_display(),
+        ),
     )
     return CancelOutcome(reservation, refund_amount, penalty_percent)
 
@@ -404,25 +484,53 @@ def pay_reservation(*, booking_reference, user):
     Finalise a pending reservation by charging the user's wallet.
     Raises Reservation.DoesNotExist; every other outcome is a PayResult.
     """
+    username = user.username
+
     with transaction.atomic():
         reservation = Reservation.objects.select_for_update().get(
             booking_reference=booking_reference, user=user
         )
 
         if reservation.status == Reservation.StatusChoices.RESERVED:
+            log_rejected(
+                'پرداخت', 'رزرو قبلاً پرداخت شده است', level=logging.INFO,
+                booking_reference=booking_reference, user=username,
+            )
             return PayResult.ALREADY_PAID, reservation
 
         if reservation.status != Reservation.StatusChoices.PENDING_PAYMENT:
+            log_rejected(
+                'پرداخت', 'وضعیت رزرو قابل پرداخت نیست',
+                booking_reference=booking_reference, user=username,
+                status=reservation.status,
+            )
             return PayResult.NOT_PAYABLE, reservation
 
         if reservation.is_payment_expired:
             _cancel_locked(reservation, Reservation.CancellationReason.TIMEOUT)
+            log_rejected(
+                'پرداخت', 'مهلت پرداخت تمام شده؛ رزرو لغو شد',
+                booking_reference=booking_reference, user=username,
+            )
+            _log_expired(reservation, username, 'تلاش برای پرداخت')
             return PayResult.EXPIRED, reservation
 
-        if reservation.passengers.count() != reservation.seats_count:
+        passenger_count = reservation.passengers.count()
+        if passenger_count != reservation.seats_count:
+            log_rejected(
+                'پرداخت', 'اطلاعات مسافران کامل نیست',
+                booking_reference=booking_reference, user=username,
+                passengers=passenger_count, seats=reservation.seats_count,
+            )
             return PayResult.PASSENGERS_INCOMPLETE, reservation
 
-        if not is_flight_bookable(reservation.seat_class.flight):
+        flight = reservation.seat_class.flight
+        if not is_flight_bookable(flight):
+            log_rejected(
+                'پرداخت', 'پرواز دیگر قابل پرداخت نیست',
+                booking_reference=booking_reference, user=username,
+                flight=flight.flight_number, flight_status=flight.status,
+            )
             return PayResult.FLIGHT_NOT_BOOKABLE, reservation
 
         wallet_user = get_user_model().objects.select_for_update().get(pk=user.pk)
@@ -430,11 +538,17 @@ def pay_reservation(*, booking_reference, user):
         try:
             # Savepoint: a failed withdraw can never leave a half-done change.
             with transaction.atomic():
-                wallet_user.withdraw(reservation.total_paid_price)
+                wallet_user.withdraw(
+                    reservation.total_paid_price,
+                    kind=WalletTransaction.KindChoices.PAYMENT,
+                    reference=reservation.booking_reference,
+                    description=f"پرداخت رزرو {reservation.booking_reference} (پرواز {flight.flight_number})",
+                )
         except ValueError:
-            logger.warning(
-                "payment failed (insufficient balance): ref=%s user=%s",
-                reservation.booking_reference, user.pk,
+            log_rejected(
+                'پرداخت', 'موجودی کیف پول ناکافی',
+                booking_reference=booking_reference, user=username,
+                needed=reservation.total_paid_price, balance=wallet_user.wallet_balance,
             )
             return PayResult.INSUFFICIENT_BALANCE, reservation
 
@@ -443,8 +557,14 @@ def pay_reservation(*, booking_reference, user):
         reservation.save(update_fields=['status', 'paid_at', 'updated_at'])
 
     logger.info(
-        "reservation paid: ref=%s user=%s amount=%s",
-        reservation.booking_reference, user.pk, reservation.total_paid_price,
+        "پرداخت موفق: %s",
+        _fmt(
+            booking_reference=reservation.booking_reference,
+            user=username,
+            flight=flight.flight_number,
+            amount=reservation.total_paid_price,
+            new_balance=wallet_user.wallet_balance,
+        ),
     )
     return PayResult.PAID, reservation
 
@@ -478,7 +598,12 @@ def _cancel_reservation_for_cancelled_flight(reservation_pk):
             wallet_user = get_user_model().objects.select_for_update().get(
                 pk=reservation.user_id
             )
-            wallet_user.deposit(refund_amount)
+            wallet_user.deposit(
+                refund_amount,
+                kind=WalletTransaction.KindChoices.REFUND,
+                reference=reservation.booking_reference,
+                description=f"استرداد کامل رزرو {reservation.booking_reference} به دلیل لغو پرواز",
+            )
 
     return was_paid, refund_amount
 
@@ -532,8 +657,8 @@ def cancel_flight_and_refund(flight_pk):
                 outcome = _cancel_reservation_for_cancelled_flight(pk)
             except Exception:
                 logger.exception(
-                    "flight cancel: failed to cancel reservation ref=%s flight=%s",
-                    reference, flight_pk,
+                    "خطا در لغو رزرو هنگام لغو پرواز: booking_reference=%s, flight=%s",
+                    reference, flight.flight_number,
                 )
                 failed[pk] = reference
                 continue
@@ -551,8 +676,13 @@ def cancel_flight_and_refund(flight_pk):
     result.failed = list(failed.values())
 
     logger.info(
-        "flight cancelled: flight=%s refunded=%s total=%s pending_released=%s failed=%s",
-        flight_pk, result.refunded_count, result.refunded_total,
-        result.cancelled_pending_count, result.failed,
+        "لغو پرواز و استرداد وجه: %s",
+        _fmt(
+            flight=flight.flight_number,
+            refunded_count=result.refunded_count,
+            refunded_total=result.refunded_total,
+            pending_released=result.cancelled_pending_count,
+            failed=result.failed,
+        ),
     )
     return result
