@@ -5,6 +5,15 @@
 {% block content %}
 <h1 class="page-title">رزروهای من</h1>
 
+<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom: 20px;">
+  {% for tab in filter_tabs %}
+    <a
+      href="{% url 'tickets:reservation_list' %}{% if tab.key %}?filter={{ tab.key }}{% endif %}"
+      class="btn btn-sm {% if tab.active %}btn-primary{% else %}btn-ghost{% endif %}"
+    >{{ tab.label }} <span class="mono">({{ tab.count }})</span></a>
+  {% endfor %}
+</div>
+
 {% if reservations %}
   <div class="ticket-list">
     {% for reservation in reservations %}
@@ -24,17 +33,64 @@
         <div class="ticket-divider" aria-hidden="true"></div>
         <div class="ticket-side">
           {% reservation_status_badge reservation %}
-          <span class="mono">{{ reservation.total_paid_price|floatformat:"0g" }} تومان</span>
+
+          {% if reservation.paid_at %}
+            {% if reservation.status == 'cancelled' %}
+              {# پرداخت شده و بعداً لغو شده: مبلغ استرداد را نشان بده #}
+              <span class="mono">{{ reservation.refund_amount|floatformat:"0g" }} تومان</span>
+              <span class="empty-hint">مسترد شد · {{ reservation.get_cancellation_reason_display|default:"لغو شده" }}</span>
+            {% else %}
+              <span class="mono">{{ reservation.total_paid_price|floatformat:"0g" }} تومان</span>
+              <span class="empty-hint">پرداخت‌شده</span>
+            {% endif %}
+          {% else %}
+            {# هرگز پرداخت نشده #}
+            <span class="mono" style="opacity: .55;">{{ reservation.total_paid_price|floatformat:"0g" }} تومان</span>
+            {% if reservation.status == 'pending_payment' %}
+              <span class="empty-hint">پرداخت‌نشده · مهلت تا ساعت {{ reservation.payment_expires_at|date:"H:i" }}</span>
+            {% else %}
+              <span class="empty-hint">پرداخت‌نشده · {{ reservation.get_cancellation_reason_display|default:"لغو شده" }}</span>
+            {% endif %}
+          {% endif %}
         </div>
       </a>
     {% endfor %}
   </div>
 
-  {% include 'partials/pagination.html' %}
+  {% if is_paginated %}
+    {# صفحه‌بندی که فیلتر انتخاب‌شده را حفظ می‌کند #}
+    <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:center; margin-top: 24px;">
+      {% if page_obj.has_previous %}
+        <a class="btn btn-ghost btn-sm" href="?{% if current_filter %}filter={{ current_filter }}&{% endif %}page={{ page_obj.previous_page_number }}">قبلی</a>
+      {% endif %}
+      {% for number in paginator.page_range %}
+        <a
+          class="btn btn-sm {% if number == page_obj.number %}btn-primary{% else %}btn-ghost{% endif %}"
+          href="?{% if current_filter %}filter={{ current_filter }}&{% endif %}page={{ number }}"
+        >{{ number }}</a>
+      {% endfor %}
+      {% if page_obj.has_next %}
+        <a class="btn btn-ghost btn-sm" href="?{% if current_filter %}filter={{ current_filter }}&{% endif %}page={{ page_obj.next_page_number }}">بعدی</a>
+      {% endif %}
+    </div>
+  {% endif %}
 {% else %}
   <div class="empty-state">
-    <p>هنوز رزروی ثبت نکرده‌ای.</p>
-    <p class="empty-hint"><a href="{% url 'flights:flight_list' %}" class="btn btn-primary" style="margin-top:14px;">جستجوی پرواز</a></p>
+    {% if current_filter == 'upcoming' %}
+      <p>پرواز آینده‌ای ندارید.</p>
+    {% elif current_filter == 'past' %}
+      <p>هنوز پروازی را انجام نداده‌اید.</p>
+    {% elif current_filter == 'cancelled' %}
+      <p>رزرو لغو‌شده‌ای ندارید.</p>
+    {% else %}
+      <p>هنوز رزروی ثبت نکرده‌ای.</p>
+    {% endif %}
+    <p class="empty-hint">
+      {% if current_filter %}
+        <a href="{% url 'tickets:reservation_list' %}" class="btn btn-ghost" style="margin-top:14px;">نمایش همه‌ی رزروها</a>
+      {% endif %}
+      <a href="{% url 'flights:flight_list' %}" class="btn btn-primary" style="margin-top:14px;">جستجوی پرواز</a>
+    </p>
   </div>
 {% endif %}
 {% endblock %}

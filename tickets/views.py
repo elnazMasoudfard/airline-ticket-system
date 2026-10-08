@@ -4,10 +4,12 @@ from django import forms
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db import IntegrityError, transaction
+from django.db.models import Count, F, Q
 from django.forms import BaseModelFormSet, modelformset_factory
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.generic import DetailView, ListView, View
 
 from flights.models import SeatClass
@@ -25,6 +27,7 @@ from .services import (
     PayResult,
     cancel_reservation,
     create_pending_reservation,
+    expire_reservation,
     expire_reservation_if_needed,
     get_penalty_percent,
     has_adjacent_block,
@@ -49,18 +52,115 @@ def redirect_to_detail(reservation):
 # List / detail
 # ---------------------------------------------------------------------------
 class ReservationListView(LoginRequiredMixin, ListView):
-    """List of the user's reservations (not all system reservations)."""
+    """
+    The user's own reservations, with filter tabs (?filter=...):
+
+      (none)     all reservations, newest first
+      upcoming   paid or waiting-for-payment reservations whose flight has not
+                 departed yet, soonest flight first
+      past       paid reservations whose flight has already departed
+      cancelled  every cancelled reservation: never paid (timeout / by user /
+                 flight cancelled) or paid and refunded
+    """
     model = Reservation
     template_name = 'tickets/reservation_list.html'
     context_object_name = 'reservations'
     paginate_by = 10
 
+    FILTER_TABS = [
+        ('', 'همه'),
+        ('upcoming', 'پروازهای آینده'),
+        ('past', 'رزروهای قبلی'),
+        ('cancelled', 'رزروهای لغو شده'),
+    ]
+
+    def get_current_filter(self):
+        key = self.request.GET.get('filter', '')
+        return key if key in {tab_key for tab_key, _ in self.FILTER_TABS} else ''
+
+    def expire_overdue(self):
+        """Cancel this user's overdue pending reservations right now (lazy expiry)."""
+        now = timezone.now()
+        overdue_ids = list(
+            Reservation.objects
+            .for_user(self.request.user)
+            .filter(status=Reservation.StatusChoices.PENDING_PAYMENT)
+            .filter(Q(payment_expires_at__lte=now) | Q(payment_expires_at__isnull=True))
+            .values_list('pk', flat=True)
+        )
+        for pk in overdue_ids:
+            expire_reservation(pk)
+
     def get_queryset(self):
-        return (
+        self.expire_overdue()
+
+        now = timezone.now()
+        status = Reservation.StatusChoices
+        departure = 'seat_class__flight__departure_datetime'
+
+        queryset = (
             Reservation.objects
             .for_user(self.request.user)
             .with_flight_info()
         )
+
+        current = self.get_current_filter()
+        if current == 'upcoming':
+            queryset = (
+                queryset
+                .filter(
+                    status__in=[status.PENDING_PAYMENT, status.RESERVED],
+                    **{f'{departure}__gt': now},
+                )
+                .order_by(departure)
+            )
+        elif current == 'past':
+            queryset = (
+                queryset
+                .filter(status=status.RESERVED, **{f'{departure}__lte': now})
+                .order_by(f'-{departure}')
+            )
+        elif current == 'cancelled':
+            queryset = (
+                queryset
+                .filter(status=status.CANCELLED)
+                .order_by(F('cancelled_at').desc(nulls_last=True), '-created_at')
+            )
+        return queryset
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+
+        now = timezone.now()
+        status = Reservation.StatusChoices
+        in_future = Q(seat_class__flight__departure_datetime__gt=now)
+
+        counts = (
+            Reservation.objects
+            .for_user(self.request.user)
+            .aggregate(
+                total=Count('pk'),
+                upcoming=Count(
+                    'pk',
+                    filter=Q(status__in=[status.PENDING_PAYMENT, status.RESERVED]) & in_future,
+                ),
+                past=Count('pk', filter=Q(status=status.RESERVED) & ~in_future),
+                cancelled=Count('pk', filter=Q(status=status.CANCELLED)),
+            )
+        )
+
+        current = self.get_current_filter()
+        context['current_filter'] = current
+        context['filter_tabs'] = [
+            {
+                'key': key,
+                'label': label,
+                'count': counts[key or 'total'],
+                'active': key == current,
+            }
+            for key, label in self.FILTER_TABS
+        ]
+        return context
 
 
 class ReservationDetailView(LoginRequiredMixin, DetailView):
