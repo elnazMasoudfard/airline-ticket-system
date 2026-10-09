@@ -26,8 +26,9 @@ class RegistrationForm(UserCreationForm):
         }
 
     def clean_email(self):
-        email = self.cleaned_data.get('email')
-        if email and CustomUser.objects.filter(email=email).exists():
+        # ایمیل را یکدست (حروف کوچک) می‌کنیم و تکراری بودن را بدون حساسیت به حروف چک می‌کنیم.
+        email = (self.cleaned_data.get('email') or '').strip().lower()
+        if email and CustomUser.objects.filter(email__iexact=email).exists():
             raise forms.ValidationError("این ایمیل قبلاً ثبت شده است.")
         return email
 
@@ -91,8 +92,11 @@ class ProfileEditForm(forms.ModelForm):
         }
 
     def clean_email(self):
-        email = self.cleaned_data.get('email')
-        if email and CustomUser.objects.filter(email=email).exclude(pk=self.instance.pk).exists():
+        email = (self.cleaned_data.get('email') or '').strip().lower()
+        if not email:
+            # ایمیل اختیاری است؛ NULL ذخیره می‌شود (نه رشته‌ی خالی) تا قید unique مشکلی نسازد.
+            return None
+        if CustomUser.objects.filter(email__iexact=email).exclude(pk=self.instance.pk).exists():
             raise forms.ValidationError("این ایمیل قبلاً توسط کاربر دیگری ثبت شده است.")
         return email
 

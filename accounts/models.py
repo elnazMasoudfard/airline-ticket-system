@@ -18,7 +18,8 @@ class CustomUserManager(BaseUserManager):
         if not username:
             raise ValueError("نام کاربری الزامی است.")
         if email:
-            email = self.normalize_email(email)
+            # ایمیل همیشه کاملاً با حروف کوچک ذخیره می‌شود تا A@x.com و a@x.com دو کاربر جدا نشوند.
+            email = self.normalize_email(email.strip()).lower()
         user = self.model(username=username, email=email, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
@@ -251,6 +252,11 @@ class PhoneVerificationCode(models.Model):
             self.code = self.generate_code()
         super().save(*args, **kwargs)
 
+    @classmethod
+    def invalidate_unused(cls, user):
+        """همه‌ی کدهای استفاده‌نشده‌ی کاربر را باطل می‌کند (با پر کردن used_at)."""
+        return cls.objects.filter(user=user, used_at__isnull=True).update(used_at=timezone.now())
+
     @property
     def is_expired(self) -> bool:
         return timezone.now() > self.created_at + timedelta(minutes=10)
@@ -291,6 +297,11 @@ class EmailVerificationToken(models.Model):
         if not self.token:
             self.token = self.generate_token()
         super().save(*args, **kwargs)
+
+    @classmethod
+    def invalidate_unused(cls, user):
+        """همه‌ی توکن‌های استفاده‌نشده‌ی کاربر را باطل می‌کند (با پر کردن used_at)."""
+        return cls.objects.filter(user=user, used_at__isnull=True).update(used_at=timezone.now())
 
     @property
     def is_expired(self) -> bool:
