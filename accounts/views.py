@@ -11,6 +11,7 @@ from django.core.mail import send_mail
 from django.shortcuts import redirect, render
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.generic import DetailView, FormView, UpdateView, View
 
 from .forms import DepositForm, LoginForm, PhoneVerificationForm, ProfileEditForm, RegistrationForm
@@ -33,6 +34,8 @@ def send_verification_email(request, user):
         logger.warning(f"تلاش برای ارسال ایمیل تایید بدون ایمیل ثبت‌شده: user={user.username}")
         return
 
+    # فقط آخرین لینک معتبر بماند: لینک‌های قبلی (مثلاً مربوط به ایمیل قدیمی) باطل می‌شوند.
+    EmailVerificationToken.invalidate_unused(user)
     token_obj = EmailVerificationToken.objects.create(user=user)
     verify_url = request.build_absolute_uri(
         reverse('accounts:verify_email', kwargs={'token': token_obj.token})
@@ -67,7 +70,7 @@ def send_verification_sms(user):
     console or file, as it constitutes sensitive security information.
     """
     # invalidate previous, unused codes so that only the latest code remains valid.
-    PhoneVerificationCode.objects.filter(user=user, used_at__isnull=True).update(used_at=timezone.now())
+    PhoneVerificationCode.invalidate_unused(user)
 
     verification = PhoneVerificationCode.objects.create(user=user)
 
@@ -78,7 +81,16 @@ def send_verification_sms(user):
         logger.warning(f"درگاه پیامک واقعی متصل نیست؛ کد تایید ساخته شد ولی ارسال نشد: user={user.username}")
 
 
-class RegisterView(FormView):
+class AnonymousOnlyMixin:
+    """کاربری که قبلاً وارد شده، صفحه‌ی ثبت‌نام/ورود را نمی‌بیند و به success_url می‌رود."""
+
+    def dispatch(self, request, *args, **kwargs):
+        if request.user.is_authenticated:
+            return redirect(self.success_url)
+        return super().dispatch(request, *args, **kwargs)
+
+
+class RegisterView(AnonymousOnlyMixin, FormView):
     """Register a new user, send a verification email, and log them in automatically."""
     template_name = 'accounts/register.html'
     form_class = RegistrationForm
@@ -154,6 +166,19 @@ class RequestPhoneVerificationView(LoginRequiredMixin, View):
     def _attempts_cache_key(self, user):
         return f'phone_verify_attempts_{user.pk}'
 
+    def _register_failed_attempt(self, cache_key):
+        """
+        شمارنده‌ی تلاش ناموفق را به‌صورت اتمیک یکی زیاد می‌کند.
+        (get و set جدا از هم در درخواست‌های همزمان می‌توانند یک تلاش را گم کنند.)
+        """
+        cache.add(cache_key, 0, timeout=self.LOCKOUT_SECONDS)
+        try:
+            return cache.incr(cache_key)
+        except ValueError:
+            # کلید بین add و incr منقضی شده است.
+            cache.set(cache_key, 1, timeout=self.LOCKOUT_SECONDS)
+            return 1
+
     def post(self, request, *args, **kwargs):
         if request.user.phone_verified:
             messages.info(request, "شماره موبایل شما قبلاً تایید شده است.")
@@ -195,7 +220,7 @@ class RequestPhoneVerificationView(LoginRequiredMixin, View):
             )
 
             if verification is None:
-                cache.set(cache_key, attempts + 1, timeout=self.LOCKOUT_SECONDS)
+                self._register_failed_attempt(cache_key)
                 security_logger.warning(
                     f"کد تایید پیامکی اشتباه: user={request.user.username}, ip={get_client_ip(request)}"
                 )
@@ -220,6 +245,33 @@ class LoginView(FormView):
     template_name = 'accounts/login.html'
     form_class = LoginForm
     success_url = reverse_lazy('flights:flight_list')
+
+    def _safe_next_url(self):
+        """
+        مقدار پارامتر `next` (از POST یا GET) را فقط وقتی برمی‌گرداند که به همین سایت اشاره کند.
+        در غیر این صورت رشته‌ی خالی؛ این کار جلوی Open Redirect را می‌گیرد.
+        """
+        candidate = self.request.POST.get('next') or self.request.GET.get('next') or ''
+        if candidate and url_has_allowed_host_and_scheme(
+            candidate,
+            allowed_hosts={self.request.get_host()},
+            require_https=self.request.is_secure(),
+        ):
+            return candidate
+        return ''
+
+    def dispatch(self, request, *args, **kwargs):
+        if request.user.is_authenticated:
+            return redirect(self._safe_next_url() or self.success_url)
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_success_url(self):
+        return self._safe_next_url() or str(self.success_url)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['next'] = self._safe_next_url()
+        return context
 
     def form_valid(self, form):
         identifier = form.cleaned_data['username']
@@ -283,8 +335,10 @@ class ProfileEditView(LoginRequiredMixin, UpdateView):
         return self.request.user
 
     def form_valid(self, form):
-        email_changed = 'email' in form.changed_data
-        phone_changed = 'phone_number' in form.changed_data
+        # مقدار نرمال‌شده‌ی جدید را با مقدار اولیه (قبل از ویرایش) مقایسه می‌کنیم؛
+        # changed_data خام را می‌سنجد و مثلاً تغییر A@x.com به a@x.com را هم «تغییر» می‌دانست.
+        email_changed = (form.cleaned_data.get('email') or None) != (form.initial.get('email') or None)
+        phone_changed = (form.cleaned_data.get('phone_number') or None) != (form.initial.get('phone_number') or None)
 
         response = super().form_valid(form)
         user = self.object
@@ -292,6 +346,8 @@ class ProfileEditView(LoginRequiredMixin, UpdateView):
         if email_changed:
             user.email_verified = False
             user.save(update_fields=['email_verified'])
+            # لینک‌های تاییدِ مربوط به ایمیل قبلی نباید ایمیل جدید را تایید کنند.
+            EmailVerificationToken.invalidate_unused(user)
             logger.info(f"ایمیل کاربر تغییر کرد و نیاز به تایید مجدد دارد: user={user.username}")
             if user.email:
                 send_verification_email(self.request, user)
@@ -300,6 +356,8 @@ class ProfileEditView(LoginRequiredMixin, UpdateView):
         if phone_changed:
             user.phone_verified = False
             user.save(update_fields=['phone_verified'])
+            # کدهای پیامکیِ ارسال‌شده برای شماره‌ی قبلی دیگر معتبر نیستند.
+            PhoneVerificationCode.invalidate_unused(user)
             messages.info(self.request, "چون شماره موبایل خود را تغییر دادید، باید دوباره تاییدش کنید.")
 
         logger.info(f"پروفایل کاربر ویرایش شد: user={user.username}")
