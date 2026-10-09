@@ -12,10 +12,14 @@ from django.utils import timezone
 from django.views.generic import DetailView, ListView, View
 
 from accounts.models import CustomUser
-from flights.models import Flight
+from flights.models import Flight, SeatClass
 from flights.services import generate_seats_for_flight, sync_flight_statuses
 from tickets.models import Reservation
-from tickets.services import ReservationError, cancel_flight_and_refund
+from tickets.services import (
+    ReservationError,
+    cancel_flight_and_refund,
+    expire_pending_reservations,
+)
 
 from .forms import FlightForm, SeatClassFormSet
 from .mixins import StaffRequiredMixin
@@ -25,6 +29,32 @@ logger = logging.getLogger('dashboard')
 STATUS = Reservation.StatusChoices
 MONEY_FIELD = DecimalField(max_digits=14, decimal_places=2)
 ZERO = Decimal('0.00')
+
+
+def live_pending_q(prefix='', now=None):
+    """
+    The ONE definition of a "pending reservation" used by every dashboard page:
+    waiting for payment AND still inside its payment window. `prefix` lets the
+    same condition be used across a relation (e.g. 'seat_classes__reservations__').
+    """
+    now = now or timezone.now()
+    return Q(**{
+        f'{prefix}status': STATUS.PENDING_PAYMENT,
+        f'{prefix}payment_expires_at__gt': now,
+    })
+
+
+def expire_stale_reservations():
+    """
+    Cancel pending reservations whose payment window is over (and free their
+    seats) before a page is built, so the manager never sees stale "pending"
+    rows and every page agrees on the numbers. A failure must never break the page.
+    """
+    try:
+        return expire_pending_reservations()
+    except Exception:
+        logger.exception("خطا در آزادسازی رزروهای منقضی‌شده‌ی پرداخت‌نشده")
+        return 0
 
 
 def reservation_financials(queryset):
@@ -38,7 +68,7 @@ def reservation_financials(queryset):
     """
     now = timezone.now()
     paid = Q(paid_at__isnull=False)
-    live_pending = Q(status=STATUS.PENDING_PAYMENT, payment_expires_at__gt=now)
+    live_pending = live_pending_q(now=now)
 
     data = queryset.aggregate(
         gross=Coalesce(Sum('total_paid_price', filter=paid), ZERO, output_field=MONEY_FIELD),
@@ -73,6 +103,7 @@ class DashboardHomeView(StaffRequiredMixin, View):
 
     def get(self, request, *args, **kwargs):
         sync_flight_statuses()
+        expire_stale_reservations()
 
         paid_only = Q(seat_classes__reservations__paid_at__isnull=False)
 
@@ -133,6 +164,7 @@ class FlightManageListView(StaffRequiredMixin, ListView):
 
     def get_queryset(self):
         sync_flight_statuses()
+        expire_stale_reservations()
         now = timezone.now()
 
         queryset = (
@@ -146,10 +178,7 @@ class FlightManageListView(StaffRequiredMixin, ListView):
                 ),
                 pending_reservation_count=Count(
                     'seat_classes__reservations',
-                    filter=Q(
-                        seat_classes__reservations__status=STATUS.PENDING_PAYMENT,
-                        seat_classes__reservations__payment_expires_at__gt=now,
-                    ),
+                    filter=live_pending_q('seat_classes__reservations__', now),
                     distinct=True,
                 ),
             )
@@ -174,6 +203,7 @@ class FlightManageDetailView(StaffRequiredMixin, DetailView):
 
     def get_queryset(self):
         sync_flight_statuses()
+        expire_stale_reservations()
         return (
             Flight.objects
             .select_related('route__origin', 'route__destination', 'airline')
@@ -191,16 +221,24 @@ class FlightManageDetailView(StaffRequiredMixin, DetailView):
         )
         context['financials'] = reservation_financials(flight_reservations)
 
-        # Info for the "cancel flight" box
-        context['can_cancel_flight'] = self.object.status not in (
-            Flight.StatusChoices.CANCELLED,
-            Flight.StatusChoices.COMPLETED,
+        # Info for the "cancel flight" box.
+        # A flight that is already CANCELLED may still hold reservations (e.g. a
+        # refund failed, or the status was set by hand), and cancel_flight_and_refund
+        # is safe to run again, so the button must stay available until none are left.
+        has_active_reservations = flight_reservations.filter(
+            status__in=[STATUS.PENDING_PAYMENT, STATUS.RESERVED]
+        ).exists()
+        status = self.object.status
+        context['needs_cancel_retry'] = (
+            status == Flight.StatusChoices.CANCELLED and has_active_reservations
+        )
+        context['can_cancel_flight'] = (
+            status != Flight.StatusChoices.COMPLETED
+            and (status != Flight.StatusChoices.CANCELLED or has_active_reservations)
         )
         context['cancel_info'] = {
             'paid_count': context['financials']['paid_count'],
-            'pending_count': flight_reservations.filter(
-                status=STATUS.PENDING_PAYMENT
-            ).count(),
+            'pending_count': flight_reservations.filter(live_pending_q()).count(),
             'refundable': flight_reservations.filter(status=STATUS.RESERVED).aggregate(
                 total=Coalesce(Sum('total_paid_price'), ZERO, output_field=MONEY_FIELD)
             )['total'],
@@ -249,50 +287,78 @@ class FlightEditView(StaffRequiredMixin, View):
         })
 
     def post(self, request, *args, **kwargs):
-        flight = self.get_flight()
-        form = FlightForm(request.POST, instance=flight)
-        formset = SeatClassFormSet(request.POST, instance=flight)
+        try:
+            with transaction.atomic():
+                # Lock the flight's seat classes FIRST (same lock order as the booking
+                # flow: SeatClass before anything else) and only then build and validate
+                # the forms. SeatClassForm derives `available_seats` from the instance's
+                # current values, so those values must be read under the lock; otherwise a
+                # booking made while the manager edits would be overwritten (overbooking).
+                list(
+                    SeatClass.objects.select_for_update()
+                    .filter(flight_id=self.kwargs['pk'])
+                    .order_by('pk')
+                )
+                flight = self.get_flight()
+                form = FlightForm(request.POST, instance=flight)
+                formset = SeatClassFormSet(request.POST, instance=flight)
 
-        if form.is_valid() and formset.is_valid():
-            try:
-                with transaction.atomic():
+                # Validate both so the manager sees every error at once.
+                form_ok = form.is_valid()
+                formset_ok = formset.is_valid()
+                is_valid = form_ok and formset_ok
+
+                if is_valid:
                     form.save()
                     formset.save()
-            except ProtectedError:
-                logger.warning(
-                    f"تلاش ناموفق برای حذف کلاس صندلی دارای تاریخچه توسط={request.user.username}, "
-                    f"flight={flight.flight_number}"
+        except ProtectedError:
+            logger.warning(
+                f"تلاش ناموفق برای حذف کلاس صندلی دارای تاریخچه توسط={request.user.username}, "
+                f"flight={flight.flight_number}"
+            )
+            messages.error(
+                request,
+                "یکی از کلاس‌های صندلی به‌خاطر داشتن تاریخچه‌ی رزرو (حتی کنسل‌شده) قابل حذف نیست. "
+                "برای حذف اجباری همراه با پاک‌شدن تاریخچه، از اکشن مخصوص در پنل ادمین جنگو استفاده کنید."
+            )
+            return render(request, self.template_name, {
+                'form': form, 'formset': formset, 'is_edit': True, 'flight': flight,
+            })
+
+        if not is_valid:
+            return render(request, self.template_name, {
+                'form': form, 'formset': formset, 'is_edit': True, 'flight': flight,
+            })
+
+        logger.info(f"پرواز ویرایش شد توسط مدیر={request.user.username}: {flight.flight_number}")
+        messages.success(request, "پرواز با موفقیت به‌روزرسانی شد.")
+
+        # Setting the status to "cancelled" in the form must also cancel
+        # and refund every reservation of this flight.
+        if (
+            'status' in form.changed_data
+            and form.cleaned_data['status'] == Flight.StatusChoices.CANCELLED
+        ):
+            try:
+                result = cancel_flight_and_refund(flight.pk)
+            except ReservationError as exc:
+                messages.error(request, str(exc))
+            except Exception:
+                # The status is already saved as CANCELLED, but the refunds did not
+                # finish. cancel_flight_and_refund is idempotent, so it can simply be
+                # run again from the flight details page.
+                logger.exception(
+                    f"خطا در استرداد رزروها پس از لغو پرواز از فرم ویرایش: flight={flight.flight_number}"
                 )
                 messages.error(
                     request,
-                    "یکی از کلاس‌های صندلی به‌خاطر داشتن تاریخچه‌ی رزرو (حتی کنسل‌شده) قابل حذف نیست. "
-                    "برای حذف اجباری همراه با پاک‌شدن تاریخچه، از اکشن مخصوص در پنل ادمین جنگو استفاده کنید."
+                    "وضعیت پرواز «لغو» ثبت شد ولی استرداد رزروها کامل انجام نشد. "
+                    "از صفحه‌ی جزئیات پرواز دوباره «لغو پرواز» را بزنید."
                 )
-                return render(request, self.template_name, {
-                    'form': form, 'formset': formset, 'is_edit': True, 'flight': flight,
-                })
+            else:
+                flash_flight_cancel_result(request, flight, result)
 
-            logger.info(f"پرواز ویرایش شد توسط مدیر={request.user.username}: {flight.flight_number}")
-            messages.success(request, "پرواز با موفقیت به‌روزرسانی شد.")
-
-            # Setting the status to "cancelled" in the form must also cancel
-            # and refund every reservation of this flight.
-            if (
-                'status' in form.changed_data
-                and form.cleaned_data['status'] == Flight.StatusChoices.CANCELLED
-            ):
-                try:
-                    result = cancel_flight_and_refund(flight.pk)
-                except ReservationError as exc:
-                    messages.error(request, str(exc))
-                else:
-                    flash_flight_cancel_result(request, flight, result)
-
-            return redirect('dashboard:flight_manage_list')
-
-        return render(request, self.template_name, {
-            'form': form, 'formset': formset, 'is_edit': True, 'flight': flight,
-        })
+        return redirect('dashboard:flight_manage_list')
 
 
 class FlightCancelView(StaffRequiredMixin, View):
@@ -305,6 +371,12 @@ class FlightCancelView(StaffRequiredMixin, View):
             result = cancel_flight_and_refund(flight.pk)
         except ReservationError as exc:
             messages.error(request, str(exc))
+        except Exception:
+            logger.exception(f"خطا در لغو پرواز: flight={flight.flight_number}")
+            messages.error(
+                request,
+                "لغو پرواز با خطا مواجه شد. دوباره تلاش کنید؛ اگر تکرار شد لاگ‌ها را بررسی کنید."
+            )
         else:
             logger.info(
                 f"لغو پرواز توسط مدیر={request.user.username}: {flight.flight_number} "
@@ -349,10 +421,11 @@ class ReservationManageListView(StaffRequiredMixin, ListView):
 
     ?filter= values:
       paid              - confirmed and paid
-      pending           - waiting for payment
+      pending           - waiting for payment (and still inside the payment window)
       unpaid_cancelled  - cancelled WITHOUT ever being paid (timeout / user)
       refunded          - paid and cancelled later (refund issued)
       active            - pending + paid (kept for old links)
+    Any other value is treated as "all".
     """
     model = Reservation
     template_name = 'dashboard/reservation_manage_list.html'
@@ -366,8 +439,15 @@ class ReservationManageListView(StaffRequiredMixin, ListView):
         ('unpaid_cancelled', 'لغو‌شده بدون پرداخت'),
         ('refunded', 'لغو‌شده با استرداد'),
     ]
+    VALID_FILTERS = frozenset({'paid', 'pending', 'unpaid_cancelled', 'refunded', 'active'})
+
+    def get_current_filter(self):
+        value = self.request.GET.get('filter', '')
+        return value if value in self.VALID_FILTERS else ''
 
     def get_queryset(self):
+        expire_stale_reservations()
+
         queryset = (
             Reservation.objects
             .select_related('user')
@@ -375,13 +455,13 @@ class ReservationManageListView(StaffRequiredMixin, ListView):
             .order_by('-created_at')
         )
 
-        current = self.request.GET.get('filter', '')
+        current = self.get_current_filter()
         if current == 'active':
             queryset = queryset.active()
         elif current == 'paid':
             queryset = queryset.filter(status=STATUS.RESERVED)
         elif current == 'pending':
-            queryset = queryset.filter(status=STATUS.PENDING_PAYMENT)
+            queryset = queryset.filter(live_pending_q())
         elif current == 'unpaid_cancelled':
             queryset = queryset.filter(status=STATUS.CANCELLED, paid_at__isnull=True)
         elif current == 'refunded':
@@ -391,7 +471,7 @@ class ReservationManageListView(StaffRequiredMixin, ListView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['filter_tabs'] = self.FILTER_TABS
-        context['current_filter'] = self.request.GET.get('filter', '')
+        context['current_filter'] = self.get_current_filter()
         return context
 
 
