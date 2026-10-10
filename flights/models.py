@@ -93,6 +93,13 @@ class FlightQuerySet(models.QuerySet):
         or airlines without triggering N+1 queries."""
         return self.select_related('route__origin', 'route__destination', 'airline')
 
+    def with_min_seats(self, count):
+        """
+        Flights that have at least one seat class with `count` or more free seats.
+        A group books inside ONE class, so the seats of different classes are not added up.
+        """
+        return self.filter(seat_classes__available_seats__gte=count).distinct()
+
 
 FlightManager = models.Manager.from_queryset(FlightQuerySet)
 
@@ -224,6 +231,10 @@ class SeatClass(TimeStampedModel):
 
     def reserve_seats(self, count: int) -> None:
         """
+        NOTE: the booking flow (tickets.services) no longer uses this method; it updates
+        `available_seats` itself while holding the SeatClass lock. Kept as a small,
+        tested helper.
+
         atomically reserves a specific number of seats (only the total count).
         Use `Seat.reserve_specific_seats` to reserve specific seats.
         """

@@ -24,10 +24,14 @@ class FlightListView(ListView):
             origin = form.cleaned_data.get('origin')
             destination = form.cleaned_data.get('destination')
             departure_date = form.cleaned_data.get('departure_date')
+            passengers = form.cleaned_data.get('passengers')
 
             queryset = queryset.by_route(origin, destination)
             if departure_date:
                 queryset = queryset.on_date(departure_date)
+            if passengers:
+                # Only flights where one class can still seat the whole group.
+                queryset = queryset.with_min_seats(passengers)
 
         return queryset
 
