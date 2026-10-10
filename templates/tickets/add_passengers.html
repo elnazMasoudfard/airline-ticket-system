@@ -1,11 +1,12 @@
 {% extends 'base.html' %}
-{% block title %}اطلاعات مسافران{% endblock %}
+{% block title %}{% if is_edit %}ویرایش اطلاعات مسافران{% else %}اطلاعات مسافران{% endif %}{% endblock %}
 
 {% block content %}
 <section class="auth-card auth-card-wide">
-  <h1 class="page-title">اطلاعات مسافران</h1>
+  <a href="{% url 'tickets:reservation_detail' reservation.booking_reference %}" class="back-link">→ بازگشت به جزئیات رزرو</a>
+  <h1 class="page-title">{% if is_edit %}ویرایش اطلاعات مسافران{% else %}اطلاعات مسافران{% endif %}</h1>
   <p class="seat-summary mono">کد رزرو: {{ reservation.booking_reference }}</p>
-  {% if reservation.payment_expires_at %}
+  {% if reservation.status == 'pending_payment' and reservation.payment_expires_at %}
     <p class="empty-hint">مهلت تکمیل و پرداخت: تا ساعت {{ reservation.payment_expires_at|date:"H:i" }}</p>
   {% endif %}
 
@@ -27,7 +28,13 @@
       </div>
     {% endfor %}
     {% for error in formset.non_form_errors %}<p class="field-error">{{ error }}</p>{% endfor %}
-    <button type="submit" class="btn btn-primary btn-block">ادامه به پرداخت</button>
+    <button type="submit" class="btn btn-primary btn-block">
+      {% if is_edit %}
+        {% if reservation.status == 'pending_payment' %}ذخیره تغییرات و ادامه به پرداخت{% else %}ذخیره تغییرات{% endif %}
+      {% else %}
+        ادامه به پرداخت
+      {% endif %}
+    </button>
   </form>
 </section>
 {% endblock %}

@@ -123,11 +123,21 @@
           </li>
         {% endfor %}
       </ul>
+
+      {# اشتباه تایپی را می‌شود اصلاح کرد: تا پیش از پرداخت، و بعد از پرداخت تا قبل از حرکت پرواز #}
+      {% if can_edit_passengers %}
+        <a
+          href="{% url 'tickets:add_passengers' reservation.booking_reference %}"
+          class="btn btn-ghost btn-sm"
+        >
+          ویرایش مشخصات مسافران
+        </a>
+      {% endif %}
     {% else %}
       <p class="empty-hint">اطلاعات مسافران ثبت نشده است.</p>
 
-      {# فقط رزرو در انتظار پرداخت می‌تواند مسافر بگیرد #}
-      {% if reservation.status == 'pending_payment' %}
+      {# مسافران را فقط رزرو قابل‌ویرایش (در انتظار پرداخت با مهلت باقی‌مانده) می‌گیرد #}
+      {% if can_edit_passengers %}
         <a
           href="{% url 'tickets:add_passengers' reservation.booking_reference %}"
           class="btn btn-accent btn-sm"
