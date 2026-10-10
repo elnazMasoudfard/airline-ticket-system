@@ -9,10 +9,15 @@ When a reservation does not exist yet (seat selection) the order simply starts
 at SeatClass. The Flight row is only read, never locked: the SeatClass lock
 already serialises every booking/cancellation of the same seat class.
 
-Two exceptions, both safe because nothing takes these locks in the opposite order:
+A Flight row is locked in exactly three kinds of places, and none of them can form
+a cycle with the others or with the booking flow:
   * the passenger step locks  Reservation -> Flight  (so one national id cannot end
     up on two active reservations of the same flight at the same moment);
-  * cancel_flight_and_refund locks the Flight alone, in its own short transaction.
+  * cancel_flight_and_refund locks the Flight alone, in its own short transaction;
+  * the management screens (dashboard edit, admin, seat generation) lock
+    Flight -> SeatClass -> Seat. They always take the Flight FIRST, and the booking
+    flow never locks a Flight, so nothing ever waits for a Flight while holding a
+    SeatClass lock.
 The wallet (User) row is always the LAST lock taken and nothing is locked after it.
 """
 import logging
@@ -456,8 +461,10 @@ def expire_pending_reservations():
 def cancel_reservation(*, booking_reference, user):
     """
     Cancel a pending or paid reservation, release the seats and refund
-    the wallet. Raises Reservation.DoesNotExist, AlreadyCancelledError or
-    CancellationNotAllowedError.
+    the wallet. A pending (unpaid) reservation can always be cancelled; a paid
+    one only while the flight is SCHEDULED and in the future (or when the flight
+    itself was cancelled). Raises Reservation.DoesNotExist, AlreadyCancelledError
+    or CancellationNotAllowedError.
     """
     with transaction.atomic():
         reservation = Reservation.objects.select_for_update().get(
@@ -473,10 +480,19 @@ def cancel_reservation(*, booking_reference, user):
 
         flight = reservation.seat_class.flight
         flight_cancelled = flight.status == Flight.StatusChoices.CANCELLED
+        was_paid = reservation.status == Reservation.StatusChoices.RESERVED
 
-        can_cancel = flight_cancelled or (
-            flight.status == Flight.StatusChoices.SCHEDULED
-            and flight.departure_datetime > timezone.now()
+        # An UNPAID reservation can always be cancelled: nothing was charged, so there
+        # is no refund or penalty to protect, and the user must be able to free the
+        # seats (e.g. when the flight has just become ACTIVE and can no longer be paid).
+        # A paid reservation is bound by the flight's status and departure time.
+        can_cancel = (
+            not was_paid
+            or flight_cancelled
+            or (
+                flight.status == Flight.StatusChoices.SCHEDULED
+                and flight.departure_datetime > timezone.now()
+            )
         )
         if not can_cancel:
             log_rejected(
@@ -488,7 +504,6 @@ def cancel_reservation(*, booking_reference, user):
                 "لغو این رزرو به دلیل وضعیت یا زمان پرواز امکان‌پذیر نیست."
             )
 
-        was_paid = reservation.status == Reservation.StatusChoices.RESERVED
         penalty_percent = get_penalty_percent(reservation, flight)
 
         if was_paid:

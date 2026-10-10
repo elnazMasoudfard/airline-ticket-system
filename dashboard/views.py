@@ -13,7 +13,11 @@ from django.views.generic import DetailView, ListView, View
 
 from accounts.models import CustomUser
 from flights.models import Flight, SeatClass
-from flights.services import generate_seats_for_flight, sync_flight_statuses
+from flights.services import (
+    generate_seats_for_flight,
+    resync_flight_seats,
+    sync_flight_statuses,
+)
 from tickets.models import Reservation
 from tickets.services import (
     ReservationError,
@@ -287,13 +291,17 @@ class FlightEditView(StaffRequiredMixin, View):
         })
 
     def post(self, request, *args, **kwargs):
+        seats_added = seats_removed = 0
         try:
             with transaction.atomic():
-                # Lock the flight's seat classes FIRST (same lock order as the booking
-                # flow: SeatClass before anything else) and only then build and validate
-                # the forms. SeatClassForm derives `available_seats` from the instance's
-                # current values, so those values must be read under the lock; otherwise a
-                # booking made while the manager edits would be overwritten (overbooking).
+                # Lock order for management screens: Flight -> SeatClass -> Seat. The Flight
+                # comes FIRST (it is also what seat generation locks first), and the booking
+                # flow never locks a Flight, so no two operations can wait for each other.
+                # The seat classes are locked BEFORE the forms are built and validated:
+                # SeatClassForm derives `available_seats` from the instance's current values,
+                # so those values must be read under the lock; otherwise a booking made while
+                # the manager edits would be overwritten (overbooking).
+                get_object_or_404(Flight.objects.select_for_update(), pk=self.kwargs['pk'])
                 list(
                     SeatClass.objects.select_for_update()
                     .filter(flight_id=self.kwargs['pk'])
@@ -311,6 +319,9 @@ class FlightEditView(StaffRequiredMixin, View):
                 if is_valid:
                     form.save()
                     formset.save()
+                    # A capacity change must also add/remove the real Seat rows of classes
+                    # that already have seats, otherwise the number and the seat map drift apart.
+                    seats_added, seats_removed = resync_flight_seats(flight)
         except ProtectedError:
             logger.warning(
                 f"تلاش ناموفق برای حذف کلاس صندلی دارای تاریخچه توسط={request.user.username}, "
@@ -319,8 +330,20 @@ class FlightEditView(StaffRequiredMixin, View):
             messages.error(
                 request,
                 "یکی از کلاس‌های صندلی به‌خاطر داشتن تاریخچه‌ی رزرو (حتی کنسل‌شده) قابل حذف نیست. "
-                "برای حذف اجباری همراه با پاک‌شدن تاریخچه، از اکشن مخصوص در پنل ادمین جنگو استفاده کنید."
+                "اگر هیچ‌یک از رزروهای آن پرداخت‌شده یا فعال نیست، می‌توانید از اکشن «حذف کلاس صندلی» "
+                "در پنل ادمین جنگو استفاده کنید؛ کلاس‌های دارای رزرو پرداخت‌شده (حتی لغوشده) "
+                "عمداً قابل حذف نیستند تا آمار مالی تغییر نکند."
             )
+            return render(request, self.template_name, {
+                'form': form, 'formset': formset, 'is_edit': True, 'flight': flight,
+            })
+        except ValueError as exc:
+            # Raised when the seats cannot follow the new capacity (not enough free seats to
+            # remove). The whole transaction was rolled back, nothing was saved.
+            logger.warning(
+                f"هماهنگی صندلی‌ها با ظرفیت ناموفق بود: flight={flight.flight_number} علت={exc}"
+            )
+            messages.error(request, str(exc))
             return render(request, self.template_name, {
                 'form': form, 'formset': formset, 'is_edit': True, 'flight': flight,
             })
@@ -332,6 +355,11 @@ class FlightEditView(StaffRequiredMixin, View):
 
         logger.info(f"پرواز ویرایش شد توسط مدیر={request.user.username}: {flight.flight_number}")
         messages.success(request, "پرواز با موفقیت به‌روزرسانی شد.")
+        if seats_added or seats_removed:
+            messages.info(
+                request,
+                f"صندلی‌ها با ظرفیت جدید هماهنگ شد: {seats_added} صندلی اضافه و {seats_removed} صندلی حذف شد.",
+            )
 
         # Setting the status to "cancelled" in the form must also cancel
         # and refund every reservation of this flight.
