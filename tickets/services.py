@@ -8,6 +8,12 @@ Lock order used everywhere (to avoid deadlocks):
 When a reservation does not exist yet (seat selection) the order simply starts
 at SeatClass. The Flight row is only read, never locked: the SeatClass lock
 already serialises every booking/cancellation of the same seat class.
+
+Two exceptions, both safe because nothing takes these locks in the opposite order:
+  * the passenger step locks  Reservation -> Flight  (so one national id cannot end
+    up on two active reservations of the same flight at the same moment);
+  * cancel_flight_and_refund locks the Flight alone, in its own short transaction.
+The wallet (User) row is always the LAST lock taken and nothing is locked after it.
 """
 import logging
 from dataclasses import dataclass, field
@@ -24,7 +30,7 @@ from django.utils import timezone
 from accounts.models import WalletTransaction
 from flights.models import Flight, Seat, SeatClass
 
-from .models import Reservation, ReservationSeat
+from .models import Passenger, Reservation, ReservationSeat
 
 logger = logging.getLogger('tickets')
 
@@ -195,6 +201,51 @@ def get_penalty_percent(reservation, flight):
     return max(Decimal('0'), min(Decimal('100'), percent))
 
 
+def can_edit_passengers(reservation):
+    """
+    Passenger details may be entered / corrected while:
+    - the reservation is pending and its payment window is still open, or
+    - it is paid (RESERVED) and the flight has not departed yet.
+    The NUMBER of passengers can never change here: it always equals seats_count.
+    """
+    if reservation.status == Reservation.StatusChoices.PENDING_PAYMENT:
+        return not reservation.is_payment_expired
+    if reservation.status == Reservation.StatusChoices.RESERVED:
+        return is_flight_bookable(reservation.seat_class.flight)
+    return False
+
+
+def find_conflicting_national_ids(reservation, national_ids):
+    """
+    Which of `national_ids` already belong to ANOTHER active reservation on the
+    same flight (paid, or pending and still inside its payment window).
+    One person cannot hold two seats on one flight, whoever made the booking.
+    Cancelled and expired reservations never block anybody.
+    """
+    national_ids = [national_id for national_id in national_ids if national_id]
+    if not national_ids:
+        return []
+
+    live = (
+        Q(reservation__status=Reservation.StatusChoices.RESERVED)
+        | Q(
+            reservation__status=Reservation.StatusChoices.PENDING_PAYMENT,
+            reservation__payment_expires_at__gt=timezone.now(),
+        )
+    )
+    found = (
+        Passenger.objects
+        .filter(
+            reservation__seat_class__flight_id=reservation.seat_class.flight_id,
+            national_id__in=national_ids,
+        )
+        .filter(live)
+        .exclude(reservation_id=reservation.pk)
+        .values_list('national_id', flat=True)
+    )
+    return sorted(set(found))
+
+
 # ---------------------------------------------------------------------------
 # Creating a pending reservation (seat selection step)
 # ---------------------------------------------------------------------------
@@ -233,16 +284,6 @@ def create_pending_reservation(*, user, seat_class_id, seat_ids, seats_count):
             )
             raise FlightNotBookableError("این پرواز در حال حاضر قابل رزرو نیست.")
 
-        if pending_limit_reached(user):
-            log_rejected(
-                'رزرو', 'سقف رزروهای در انتظار پرداخت',
-                user=username, limit=MAX_PENDING_RESERVATIONS_PER_USER,
-            )
-            raise BookingError(
-                f"شما در حال حاضر {MAX_PENDING_RESERVATIONS_PER_USER} رزرو "
-                "در انتظار پرداخت دارید. ابتدا آن‌ها را پرداخت یا لغو کنید."
-            )
-
         if seat_class.available_seats < seats_count:
             log_rejected(
                 'رزرو', 'ظرفیت ناکافی',
@@ -276,6 +317,21 @@ def create_pending_reservation(*, user, seat_class_id, seat_ids, seats_count):
                 user=username, seat_class=seat_class.pk, seat_ids=seat_ids,
             )
             raise
+
+        # The limit is checked under a lock on the user's row. The SeatClass lock only
+        # serialises bookings of the SAME class, so without this two simultaneous
+        # requests of one user in different classes could both pass the check.
+        # (The wallet row is the last lock of the lock order, so this cannot deadlock.)
+        get_user_model().objects.select_for_update().get(pk=user.pk)
+        if pending_limit_reached(user):
+            log_rejected(
+                'رزرو', 'سقف رزروهای در انتظار پرداخت',
+                user=username, limit=MAX_PENDING_RESERVATIONS_PER_USER,
+            )
+            raise BookingError(
+                f"شما در حال حاضر {MAX_PENDING_RESERVATIONS_PER_USER} رزرو "
+                "در انتظار پرداخت دارید. ابتدا آن‌ها را پرداخت یا لغو کنید."
+            )
 
         now = timezone.now()
 
@@ -482,7 +538,11 @@ def cancel_reservation(*, booking_reference, user):
 def pay_reservation(*, booking_reference, user):
     """
     Finalise a pending reservation by charging the user's wallet.
-    Raises Reservation.DoesNotExist; every other outcome is a PayResult.
+
+    Returns a tuple `(PayResult, reservation)`: every outcome, successful or not,
+    is reported through the PayResult (the reservation is the locked row as it
+    was when the function finished). The only exception it raises is
+    Reservation.DoesNotExist, when the reference does not belong to this user.
     """
     username = user.username
 

@@ -12,7 +12,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.generic import DetailView, ListView, View
 
-from flights.models import SeatClass
+from flights.models import Flight, SeatClass
 
 from .forms import PassengerForm, ReservationForm
 from .models import Passenger, Reservation
@@ -25,10 +25,12 @@ from .services import (
     CancellationNotAllowedError,
     FlightNotBookableError,
     PayResult,
+    can_edit_passengers,
     cancel_reservation,
     create_pending_reservation,
     expire_reservation,
     expire_reservation_if_needed,
+    find_conflicting_national_ids,
     get_penalty_percent,
     has_adjacent_block,
     log_rejected,
@@ -192,6 +194,8 @@ class ReservationDetailView(LoginRequiredMixin, DetailView):
         context = super().get_context_data(**kwargs)
         reservation = context['reservation']
         context['payment_window_minutes'] = PAYMENT_WINDOW_MINUTES
+        # Lets the template show an "edit passengers" link.
+        context['can_edit_passengers'] = can_edit_passengers(reservation)
         if reservation.status == Reservation.StatusChoices.RESERVED:
             context['penalty_percent'] = get_penalty_percent(
                 reservation, reservation.seat_class.flight
@@ -410,6 +414,12 @@ class SeatSelectionView(LoginRequiredMixin, View):
 # Step 3: passengers
 # ---------------------------------------------------------------------------
 class PassengerBaseFormSet(BaseModelFormSet):
+    def __init__(self, *args, reservation=None, **kwargs):
+        # The reservation is needed to look for the same national id on other
+        # active reservations of the same flight.
+        self.reservation = reservation
+        super().__init__(*args, **kwargs)
+
     def clean(self):
         super().clean()
 
@@ -436,6 +446,15 @@ class PassengerBaseFormSet(BaseModelFormSet):
             raise forms.ValidationError(
                 "کد ملی مسافران یک رزرو نباید تکراری باشد."
             )
+
+        # One person cannot hold two seats on the same flight, whoever booked them.
+        if self.reservation is not None:
+            conflicts = find_conflicting_national_ids(self.reservation, national_ids)
+            if conflicts:
+                raise forms.ValidationError(
+                    "برای کد ملی " + "، ".join(conflicts) +
+                    " قبلاً یک رزرو فعال روی همین پرواز ثبت شده است."
+                )
 
 
 class AddPassengersView(LoginRequiredMixin, View):
@@ -474,11 +493,19 @@ class AddPassengersView(LoginRequiredMixin, View):
             )
             return redirect_to_detail(reservation)
 
-        if reservation.status != Reservation.StatusChoices.PENDING_PAYMENT:
+        if not can_edit_passengers(reservation):
             messages.info(request, "این رزرو در وضعیت قابل ویرایش نیست.")
             return redirect_to_detail(reservation)
 
         return None
+
+    @staticmethod
+    def posted_initial_forms(request):
+        """INITIAL_FORMS of the submitted formset (0 when missing or broken)."""
+        try:
+            return int(request.POST.get('form-INITIAL_FORMS', 0))
+        except (TypeError, ValueError):
+            return 0
 
     def render_fresh_form(self, request):
         """Re-render an empty/current form after a failed save."""
@@ -494,6 +521,7 @@ class AddPassengersView(LoginRequiredMixin, View):
             {
                 'reservation': reservation,
                 'formset': formset_class(queryset=existing_passengers),
+                'is_edit': existing_passengers.count() >= reservation.seats_count,
             },
         )
 
@@ -507,11 +535,8 @@ class AddPassengersView(LoginRequiredMixin, View):
         existing_passengers = reservation.passengers.all()
         existing_count = existing_passengers.count()
 
-        # Everything has been entered already; nothing to show.
-        if existing_count >= reservation.seats_count:
-            messages.info(request, "اطلاعات همه مسافران این رزرو قبلاً ثبت شده است.")
-            return redirect_to_detail(reservation)
-
+        # When every passenger has been entered already, the same page works as an
+        # "edit" form: the forms are filled with the saved data (see `is_edit`).
         formset_class = self.get_formset_class(
             reservation.seats_count, existing_count
         )
@@ -522,6 +547,7 @@ class AddPassengersView(LoginRequiredMixin, View):
             {
                 'reservation': reservation,
                 'formset': formset_class(queryset=existing_passengers),
+                'is_edit': existing_count >= reservation.seats_count,
             },
         )
 
@@ -535,10 +561,6 @@ class AddPassengersView(LoginRequiredMixin, View):
                     user=request.user,
                 )
 
-                if reservation.status != Reservation.StatusChoices.PENDING_PAYMENT:
-                    messages.info(request, "این رزرو در وضعیت قابل ویرایش نیست.")
-                    return redirect_to_detail(reservation)
-
                 if reservation.is_payment_expired:
                     # The detail page performs the actual expiry (lazy expiry).
                     messages.error(
@@ -547,25 +569,43 @@ class AddPassengersView(LoginRequiredMixin, View):
                     )
                     return redirect_to_detail(reservation)
 
+                if not can_edit_passengers(reservation):
+                    messages.info(request, "این رزرو در وضعیت قابل ویرایش نیست.")
+                    return redirect_to_detail(reservation)
+
+                # Lock the flight row too, so two simultaneous submissions that carry
+                # the same national id cannot both pass the "one seat per person on a
+                # flight" check. Lock order: Reservation -> Flight (see services.py).
+                Flight.objects.select_for_update().get(
+                    pk=reservation.seat_class.flight_id
+                )
+
                 existing_passengers = reservation.passengers.all()
                 existing_count = existing_passengers.count()
 
-                if existing_count >= reservation.seats_count:
+                # A stale form (e.g. a double click on "submit") still says "no passenger
+                # exists yet". It must not be treated as an edit or create duplicates.
+                # A real edit submits the saved passengers (INITIAL_FORMS == count).
+                if (
+                    existing_count >= reservation.seats_count
+                    and self.posted_initial_forms(request) < existing_count
+                ):
                     messages.info(request, "اطلاعات مسافران این رزرو قبلاً ثبت شده است.")
                     return redirect_to_detail(reservation)
 
+                is_edit = existing_count >= reservation.seats_count
                 formset_class = self.get_formset_class(
                     reservation.seats_count, existing_count
                 )
                 formset = formset_class(
-                    request.POST, queryset=existing_passengers
+                    request.POST, queryset=existing_passengers, reservation=reservation
                 )
 
                 if not formset.is_valid():
                     return render(
                         request,
                         self.template_name,
-                        {'reservation': reservation, 'formset': formset},
+                        {'reservation': reservation, 'formset': formset, 'is_edit': is_edit},
                     )
 
                 for passenger in formset.save(commit=False):
@@ -598,10 +638,18 @@ class AddPassengersView(LoginRequiredMixin, View):
             return self.render_fresh_form(request)
 
         logger.info(
-            "اطلاعات مسافران ثبت شد: booking_reference=%s, passenger_count=%s",
-            reservation.booking_reference, reservation.seats_count,
+            "اطلاعات مسافران %s شد: booking_reference=%s, passenger_count=%s",
+            "ویرایش" if is_edit else "ثبت", reservation.booking_reference, reservation.seats_count,
         )
-        messages.success(request, "اطلاعات مسافران با موفقیت ثبت شد.")
+        if reservation.status == Reservation.StatusChoices.RESERVED:
+            # Already paid: nothing left to do, go back to the ticket.
+            messages.success(request, "اطلاعات مسافران به‌روزرسانی شد.")
+            return redirect_to_detail(reservation)
+
+        messages.success(
+            request,
+            "اطلاعات مسافران به‌روزرسانی شد." if is_edit else "اطلاعات مسافران با موفقیت ثبت شد.",
+        )
         return redirect(
             'tickets:reservation_payment',
             booking_reference=reservation.booking_reference,
