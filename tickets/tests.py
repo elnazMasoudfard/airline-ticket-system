@@ -534,6 +534,45 @@ class CancellationTests(TicketsTestCase):
         self.assertEqual(reservation.refund_amount, reservation.total_paid_price)
         self.assertEqual(self.wallet(), balance + reservation.total_paid_price)
 
+    def test_unpaid_reservation_can_be_cancelled_after_the_flight_became_active(self):
+        reservation = self.book_with_passengers()
+        seat = reservation.reservation_seats.get().seat
+        # less than an hour to departure: the flight is ACTIVE, so it can no longer be paid
+        self.update_flight(
+            departure_datetime=timezone.now() + timedelta(minutes=30),
+            status=Flight.StatusChoices.ACTIVE,
+        )
+        balance = self.wallet()
+
+        self.pay(reservation)  # refused, nothing is charged
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, STATUS.PENDING_PAYMENT)
+
+        response = self.client.post(self.cancel_url(reservation))
+
+        self.assertRedirects(response, reverse('tickets:reservation_list'), fetch_redirect_response=False)
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, STATUS.CANCELLED)
+        self.assertEqual(reservation.cancellation_reason, REASON.USER)
+        self.assertEqual(reservation.refund_amount, Decimal('0.00'))
+        seat.refresh_from_db()
+        self.assertTrue(seat.is_available)
+        self.assertEqual(self.refresh_seat_class(), 6)
+        self.assertEqual(self.wallet(), balance)
+
+    def test_unpaid_reservation_can_be_cancelled_after_the_flight_ended(self):
+        reservation = self.book(1)
+        self.update_flight(
+            departure_datetime=timezone.now() - timedelta(hours=3),
+            arrival_datetime=timezone.now() - timedelta(hours=1),
+        )
+
+        self.client.post(self.cancel_url(reservation))
+
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, STATUS.CANCELLED)
+        self.assertEqual(self.refresh_seat_class(), 6)
+
     def test_other_users_cannot_cancel_my_reservation(self):
         reservation = self.book(1)
         other = CustomUser.objects.create_user(username='other', password='pass12345')
