@@ -1,8 +1,7 @@
-import re
-
 from django.conf import settings
 
-_CONTROL_CHARS = re.compile(r'[\x00-\x1f\x7f]')
+# Kept importable from here: several views already do `from .utils import sanitize_for_log`.
+from core.utils import sanitize_for_log  # noqa: F401
 
 
 def get_client_ip(request):
@@ -18,12 +17,3 @@ def get_client_ip(request):
         if forwarded:
             return forwarded.split(',')[0].strip()
     return request.META.get('REMOTE_ADDR') or '-'
-
-
-def sanitize_for_log(value, max_length=100):
-    """
-    Make user-supplied text safe for a log line: control characters (newlines
-    included) are replaced, so nobody can forge fake log entries, and the
-    length is limited.
-    """
-    return _CONTROL_CHARS.sub(' ', str(value)).strip()[:max_length]
