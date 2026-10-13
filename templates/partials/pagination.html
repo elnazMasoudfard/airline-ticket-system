@@ -1,7 +1,25 @@
+{% load ui %}
 {% if is_paginated %}
-  <nav class="pagination">
-    {% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}">قبلی</a>{% endif %}
-    <span>صفحه {{ page_obj.number }} از {{ page_obj.paginator.num_pages }}</span>
-    {% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}">بعدی</a>{% endif %}
+  {% page_items page_obj as items %}
+  <nav class="pagination" aria-label="صفحه‌بندی">
+    {% if page_obj.has_previous %}
+      <a class="page-link page-step" href="?{% query_string page=page_obj.previous_page_number %}" rel="prev">قبلی</a>
+    {% endif %}
+
+    <ul class="page-list">
+      {% for item in items %}
+        {% if item.gap %}
+          <li class="page-gap" aria-hidden="true">…</li>
+        {% elif item.current %}
+          <li><span class="page-link page-current" aria-current="page">{{ item.number }}</span></li>
+        {% else %}
+          <li><a class="page-link" href="?{% query_string page=item.number %}">{{ item.number }}</a></li>
+        {% endif %}
+      {% endfor %}
+    </ul>
+
+    {% if page_obj.has_next %}
+      <a class="page-link page-step" href="?{% query_string page=page_obj.next_page_number %}" rel="next">بعدی</a>
+    {% endif %}
   </nav>
 {% endif %}

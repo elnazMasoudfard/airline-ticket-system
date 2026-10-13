@@ -4,33 +4,48 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#1C2541">
   <title>{% block title %}پروازها{% endblock %} | آسمان‌یار</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231C2541'/%3E%3Ctext x='16' y='23' font-size='20' text-anchor='middle' fill='%23C08A3E'%3E%E2%9C%88%3C/text%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{% static 'css/main.css' %}">
   {% block extra_head %}{% endblock %}
 </head>
 <body>
 
+<a class="skip-link" href="#main-content">پرش به محتوای اصلی</a>
+
 <header class="site-header">
   <div class="container header-inner">
     <a href="{% url 'flights:flight_list' %}" class="brand">
-      <span class="brand-mark">✈</span>
+      <span class="brand-mark" aria-hidden="true">✈</span>
       <span class="brand-name">آسمان‌یار</span>
     </a>
 
-    <nav class="main-nav">
-      <a href="{% url 'flights:flight_list' %}">پروازها</a>
+    <button type="button" class="nav-toggle" aria-controls="main-nav" aria-expanded="false" aria-label="باز و بسته کردن منو">
+      <span class="nav-toggle-bar"></span>
+      <span class="nav-toggle-bar"></span>
+      <span class="nav-toggle-bar"></span>
+    </button>
+
+    <nav class="main-nav" id="main-nav" aria-label="منوی اصلی">
+      <a href="{% url 'flights:flight_list' %}"{% if request.resolver_match.app_name == 'flights' %} class="active" aria-current="page"{% endif %}>پروازها</a>
       {% if user.is_authenticated %}
-        <a href="{% url 'tickets:reservation_list' %}">رزروهای من</a>
+        <a href="{% url 'tickets:reservation_list' %}"{% if request.resolver_match.app_name == 'tickets' %} class="active" aria-current="page"{% endif %}>رزروهای من</a>
       {% endif %}
       {% if user.is_staff %}
-        <a href="{% url 'dashboard:home' %}">پنل مدیریت</a>
+        <a href="{% url 'dashboard:home' %}"{% if request.resolver_match.app_name == 'dashboard' %} class="active" aria-current="page"{% endif %}>پنل مدیریت</a>
       {% endif %}
     </nav>
 
     <div class="header-auth">
       {% if user.is_authenticated %}
+        <a href="{% url 'accounts:deposit' %}" class="wallet-chip" title="شارژ کیف پول">
+          <span class="wallet-label">موجودی کیف پول</span>
+          <span class="wallet-amount mono">{{ user.wallet_balance|floatformat:"0g" }} <small>تومان</small></span>
+        </a>
         <a href="{% url 'accounts:profile' %}" class="btn btn-ghost btn-sm">پروفایل</a>
         <form action="{% url 'accounts:logout' %}" method="post" class="inline-form">
           {% csrf_token %}
@@ -47,12 +62,12 @@
 {% if messages %}
   <div class="container messages-wrap">
     {% for message in messages %}
-      <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+      <div class="alert alert-{{ message.tags }}" role="{% if message.level >= 30 %}alert{% else %}status{% endif %}">{{ message }}</div>
     {% endfor %}
   </div>
 {% endif %}
 
-<main class="site-main">
+<main class="site-main" id="main-content" tabindex="-1">
   <div class="container">
     {% block content %}{% endblock %}
   </div>
@@ -64,5 +79,7 @@
   </div>
 </footer>
 
+<script src="{% static 'js/site.js' %}" defer></script>
+{% block extra_js %}{% endblock %}
 </body>
 </html>

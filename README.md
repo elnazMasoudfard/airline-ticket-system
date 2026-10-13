@@ -26,7 +26,7 @@ This project was built as a university web programming course project, with an e
 - **Profile editing** — users can update their name, email, and phone number; changing email or phone resets its verification status, **invalidates every pending verification link/code**, and (for email) triggers a fresh verification link
 - **Email verification** — a one-time link (24h expiry) sent via a configurable email backend (console backend by default; switches to real SMTP via `.env` for a live demo)
 - **Simulated phone (SMS) verification** — a 6-digit one-time code flow with a lockout after 5 wrong attempts (15 minutes); since no real SMS gateway is connected, the code is logged instead of texted
-- **Structured logging** — rotating file handlers (`general.log`, `errors.log`, `security.log`) with a dedicated logger per app, covering auth events, wallet transactions, booking lifecycle, and staff actions. Client IPs are only taken from `X-Forwarded-For` when explicitly trusted, and user-supplied text is sanitised against log injection. Django admin actions (add/change/delete) are also captured via a signal on `LogEntry`.
+- **Structured logging** — rotating file handlers (`general.log`, `errors.log`, `security.log`) with a dedicated logger per app, covering auth events, wallet transactions, booking lifecycle, and staff actions. Client IPs are only taken from `X-Forwarded-For` when explicitly trusted, and user-supplied text is sanitised against log injection. Every Django admin action (add/change/delete, including bulk actions on several objects) is also written to the log through a dedicated `admin_panel` logger; deletions are raised as warnings and free text is sanitised before it reaches the file.
 
 ### Staff Dashboard
 - A separate, staff-only management area (distinct from the Django admin) for:
@@ -43,7 +43,7 @@ This project was built as a university web programming course project, with an e
 - **Service layer** — booking, payment, cancellation and expiry live in `tickets/services.py`, so views, the dashboard and the management commands all share one implementation of the business rules
 - **Custom model managers/querysets** (`Flight.objects.upcoming()`, `Reservation.objects.active()`, etc.) centralize query logic instead of repeating filters across views
 - **DRY templates** — shared partials (`pagination.html`) and custom template tags (`{% flight_status_badge %}`, `{% reservation_status_badge %}`) eliminate duplicated markup across pages
-- **Custom RTL UI** — hand-built Persian interface (no frontend framework) with a boarding-pass-inspired visual identity
+- **Custom RTL UI** — hand-built Persian interface (no frontend framework) with a boarding-pass-inspired visual identity. It is responsive (collapsible menu on small screens, wallet balance always visible in the header), accessible (skip link, `aria-current`, visible keyboard focus, screen-reader friendly messages and pagination), protects forms against double clicks, keeps search filters when paging, and prints a clean ticket
 
 ## 🔄 Booking lifecycle & business rules
 
@@ -85,7 +85,7 @@ The project is split into five Django apps, each with a single responsibility:
 
 ```
 airline_system/
-├── core/        # Shared abstract base model, admin-action logging signal, custom template tags
+├── core/        # Shared abstract base model, admin-action logging, shared helpers, custom template tags
 ├── accounts/    # Custom user model, authentication, wallet + ledger, email/phone verification
 ├── flights/     # Airports, airlines, routes, flights, seat classes, individual seats, status sync
 ├── tickets/     # Reservations, passengers, seat-selection / payment / cancellation workflow
@@ -175,6 +175,18 @@ CACHES = {
 }
 ```
 
+Logging: besides the existing handlers, add a logger for admin-panel actions (the signal in `core/signals.py` writes to it):
+
+```python
+LOGGING['loggers']['admin_panel'] = {
+    'handlers': ['console', 'file_general', 'file_security'],
+    'level': 'INFO',
+    'propagate': False,
+}
+```
+
+(or add the same entry inside the `'loggers'` dictionary of `LOGGING`). Without it these messages are not recorded.
+
 Optional settings (defaults in parentheses):
 
 | Setting | Meaning |
@@ -251,7 +263,7 @@ FinalProject/
 │   ├── admin.py        # View-only ledger, read-only balance
 │   ├── forms.py        # Registration, login, profile edit, deposit, phone verification forms
 │   ├── views.py        # Auth flow, profile editing, wallet deposit, email/phone verification
-│   ├── utils.py        # Client IP and log-injection-safe text for the security log
+│   ├── utils.py        # Client IP helper for the security log (sanitize_for_log lives in core)
 │   ├── tests.py        # Ledger, registration/login, verification and lockout tests
 │   └── urls.py
 ├── flights/
@@ -283,10 +295,15 @@ FinalProject/
 │   └── urls.py
 ├── core/
 │   ├── models.py             # TimeStampedModel abstract base
-│   ├── signals.py            # Logs Django admin actions into the app's logging system
-│   └── templatetags/badges.py # Custom template tags for status badges
-├── templates/                  # RTL HTML templates + shared partials
-├── static/css/main.css         # Custom design system
+│   ├── signals.py            # Logs Django admin actions (single and bulk) via the `admin_panel` logger
+│   ├── utils.py              # sanitize_for_log, shared by every app
+│   ├── tests.py              # Timestamps, badges, pagination tags, layout, admin-action logging
+│   └── templatetags/
+│       ├── badges.py         # Status badges (reservation / flight)
+│       └── ui.py             # Pagination helpers that keep the query string
+├── templates/                  # RTL HTML templates + shared partials (pagination, status badge)
+├── static/css/main.css         # Custom design system (responsive, print styles)
+├── static/js/site.js           # Mobile menu and double-submit protection
 └── airline_system/              # Project settings & root URLs
 ```
 
@@ -294,7 +311,7 @@ FinalProject/
 
 Core requirements and all optional bonus items (custom managers, email/SMS verification, template optimization, automated tests, Ajax) are complete. What remains is polish and real-world integration:
 
-- [ ] Mobile-responsive pass — hamburger nav for small screens, responsive dashboard tables, touch-friendly seat map
+- [ ] Mobile polish — card-style dashboard tables on small screens (the menu, forms, tickets and seat map are already responsive)
 - [ ] Real payment gateway integration for wallet top-ups (e.g., ZarinPal sandbox)
 - [ ] Real SMS gateway integration (currently simulated via logging)
 - [ ] Redis cache for multi-server deployments (the database cache is enough for a single server)
