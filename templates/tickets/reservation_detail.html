@@ -178,6 +178,8 @@
 {# رزرو پرداخت‌شده و نهایی #}
 {% elif reservation.status == 'reserved' %}
 
+  {# The cancel button only appears when cancelling is really possible. #}
+  {% if can_cancel %}
   <div class="cancel-form">
     <button
       type="button"
@@ -232,6 +234,9 @@
       </div>
     </div>
   </div>
+  {% else %}
+  <div class="cancel-blocked" role="note">{{ cancel_blocked_reason }}</div>
+  {% endif %}
 
 {% endif %}
 

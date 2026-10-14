@@ -458,6 +458,37 @@ def expire_pending_reservations():
     return expired_count
 
 
+def cancellation_blocked_reason(reservation):
+    """
+    Why this reservation can NOT be cancelled right now, as a short text for the user,
+    or None when it can. One rule for everybody: cancel_reservation() enforces it and the
+    reservation page uses it to decide whether to offer the cancel button at all.
+
+    - an unpaid reservation can always be cancelled (nothing was charged);
+    - a paid one can be cancelled while the flight is SCHEDULED and in the future,
+      or when the flight itself was cancelled (full refund).
+    """
+    if reservation.status == Reservation.StatusChoices.CANCELLED:
+        return "این رزرو قبلاً کنسل شده است."
+    if reservation.status != Reservation.StatusChoices.RESERVED:
+        return None
+
+    flight = reservation.seat_class.flight
+    now = timezone.now()
+
+    if flight.status == Flight.StatusChoices.CANCELLED:
+        return None
+    if flight.status == Flight.StatusChoices.SCHEDULED and flight.departure_datetime > now:
+        return None
+
+    if flight.status == Flight.StatusChoices.COMPLETED or flight.arrival_datetime <= now:
+        return "این پرواز انجام شده است و دیگر امکان لغو رزرو وجود ندارد."
+    return (
+        "پرواز در حال انجام است یا کمتر از یک ساعت به حرکت آن مانده؛ "
+        "لغو رزرو دیگر امکان‌پذیر نیست."
+    )
+
+
 def cancel_reservation(*, booking_reference, user):
     """
     Cancel a pending or paid reservation, release the seats and refund
@@ -486,23 +517,14 @@ def cancel_reservation(*, booking_reference, user):
         # is no refund or penalty to protect, and the user must be able to free the
         # seats (e.g. when the flight has just become ACTIVE and can no longer be paid).
         # A paid reservation is bound by the flight's status and departure time.
-        can_cancel = (
-            not was_paid
-            or flight_cancelled
-            or (
-                flight.status == Flight.StatusChoices.SCHEDULED
-                and flight.departure_datetime > timezone.now()
-            )
-        )
-        if not can_cancel:
+        blocked_reason = cancellation_blocked_reason(reservation)
+        if blocked_reason:
             log_rejected(
                 'لغو', 'وضعیت یا زمان پرواز اجازه‌ی لغو نمی‌دهد',
                 booking_reference=booking_reference, user=user.username,
                 flight=flight.flight_number, flight_status=flight.status,
             )
-            raise CancellationNotAllowedError(
-                "لغو این رزرو به دلیل وضعیت یا زمان پرواز امکان‌پذیر نیست."
-            )
+            raise CancellationNotAllowedError(blocked_reason)
 
         penalty_percent = get_penalty_percent(reservation, flight)
 

@@ -22,6 +22,7 @@ from .services import (
     PAYMENT_WINDOW_MINUTES,
     BookingError,
     PayResult,
+    cancellation_blocked_reason,
     column_index,
     create_pending_reservation,
     expire_pending_reservations,
@@ -985,6 +986,85 @@ class ReservationPagesTests(TicketsTestCase):
 
         self.client.post(self.cancel_url(reservation))
         self.assertFalse(self.client.get(self.detail_url(reservation)).context['can_edit_passengers'])
+
+    # ----- the cancel button is only offered when cancelling is possible -----
+    def test_cancel_button_is_offered_before_the_flight(self):
+        reservation = self.book_and_pay()
+        response = self.client.get(self.detail_url(reservation))
+
+        self.assertTrue(response.context['can_cancel'])
+        self.assertIsNone(response.context['cancel_blocked_reason'])
+        self.assertContains(response, 'cancelModal')
+
+    def test_cancel_button_is_hidden_when_the_flight_is_in_progress(self):
+        reservation = self.book_and_pay()
+        self.update_flight(
+            departure_datetime=timezone.now() - timedelta(hours=1),
+            arrival_datetime=timezone.now() + timedelta(hours=1),
+        )
+
+        response = self.client.get(self.detail_url(reservation))
+
+        self.assertFalse(response.context['can_cancel'])
+        self.assertContains(response, 'cancel-blocked')
+        self.assertNotContains(response, 'cancelModal')
+
+    def test_cancel_button_is_hidden_after_the_flight_took_place(self):
+        reservation = self.book_and_pay()
+        self.update_flight(
+            departure_datetime=timezone.now() - timedelta(hours=3),
+            arrival_datetime=timezone.now() - timedelta(hours=1),
+        )
+
+        response = self.client.get(self.detail_url(reservation))
+
+        self.assertFalse(response.context['can_cancel'])
+        self.assertIn('انجام شده', response.context['cancel_blocked_reason'])
+        self.assertNotContains(response, 'cancelModal')
+
+    def test_cancel_button_returns_when_the_flight_is_cancelled(self):
+        reservation = self.book_and_pay()
+        self.update_flight(status=Flight.StatusChoices.CANCELLED)
+
+        response = self.client.get(self.detail_url(reservation))
+
+        self.assertTrue(response.context['can_cancel'])
+        self.assertContains(response, 'cancelModal')
+
+    def test_an_unpaid_reservation_can_always_be_cancelled_from_its_page(self):
+        reservation = self.book(1)
+        self.update_flight(
+            departure_datetime=timezone.now() + timedelta(minutes=30),
+            status=Flight.StatusChoices.ACTIVE,
+        )
+
+        response = self.client.get(self.detail_url(reservation))
+
+        self.assertTrue(response.context['can_cancel'])
+        self.assertContains(response, reverse('tickets:reservation_cancel', kwargs={
+            'booking_reference': reservation.booking_reference,
+        }))
+
+    def test_the_service_gives_the_same_answer_as_the_page(self):
+        reservation = self.book_and_pay()
+        self.assertIsNone(cancellation_blocked_reason(reservation))
+
+        self.update_flight(
+            departure_datetime=timezone.now() - timedelta(hours=3),
+            arrival_datetime=timezone.now() - timedelta(hours=1),
+        )
+        reservation = Reservation.objects.select_related('seat_class__flight').get(pk=reservation.pk)
+        self.assertTrue(cancellation_blocked_reason(reservation))
+
+        self.client.post(self.cancel_url(reservation))  # refused for the same reason
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, STATUS.RESERVED)
+
+    def test_a_cancelled_reservation_reports_that_it_is_already_cancelled(self):
+        reservation = self.book(1)
+        self.client.post(self.cancel_url(reservation))
+        reservation = Reservation.objects.select_related('seat_class__flight').get(pk=reservation.pk)
+        self.assertIn('قبلاً', cancellation_blocked_reason(reservation))
 
     def test_login_is_required(self):
         self.client.logout()

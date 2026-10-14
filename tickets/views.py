@@ -27,6 +27,7 @@ from .services import (
     PayResult,
     can_edit_passengers,
     cancel_reservation,
+    cancellation_blocked_reason,
     create_pending_reservation,
     expire_reservation,
     expire_reservation_if_needed,
@@ -196,6 +197,11 @@ class ReservationDetailView(LoginRequiredMixin, DetailView):
         context['payment_window_minutes'] = PAYMENT_WINDOW_MINUTES
         # Lets the template show an "edit passengers" link.
         context['can_edit_passengers'] = can_edit_passengers(reservation)
+        # The cancel button is only offered when cancelling is really possible; otherwise the
+        # page explains why (the flight has departed, is in progress ...).
+        blocked_reason = cancellation_blocked_reason(reservation)
+        context['can_cancel'] = blocked_reason is None
+        context['cancel_blocked_reason'] = blocked_reason
         if reservation.status == Reservation.StatusChoices.RESERVED:
             context['penalty_percent'] = get_penalty_percent(
                 reservation, reservation.seat_class.flight
