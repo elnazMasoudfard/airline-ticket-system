@@ -19,7 +19,7 @@
   --color-border: #E4DFD3;
 
   --font-body: 'Vazirmatn', Tahoma, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  --font-mono: 'JetBrains Mono', 'Vazirmatn', 'Courier New', monospace;
 
   --radius-card: 18px;
   --radius-sm: 10px;
@@ -1038,4 +1038,125 @@ a.wallet-chip:hover { box-shadow: 0 6px 16px -8px rgba(192, 138, 62, .7); }
   .site-main { padding: 0; }
   .boarding-pass { box-shadow: none; border: 1px solid #999; break-inside: avoid; }
   body { background: #fff; }
+}
+
+
+/* ======================================================================
+   Dashboard on small screens
+   ====================================================================== */
+
+/* ===== Statistic cards: 4 across on a wide screen, 2 on a phone, 1 for long amounts ===== */
+.stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.profile-card { min-width: 0; }
+.profile-card-value { overflow-wrap: anywhere; }
+
+@media (max-width: 900px) {
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 480px) {
+  .stat-grid-money { grid-template-columns: minmax(0, 1fr); }
+  .profile-card { padding: 16px; }
+}
+
+/* ===== Toolbars, tabs and button rows wrap instead of overflowing ===== */
+.dashboard-toolbar { flex-wrap: wrap; gap: 12px; }
+.toolbar-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.filter-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.button-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+
+/* ===== Action buttons at the end of a table row ===== */
+.table-actions { display: flex; gap: 6px; }
+.dashboard-table td.table-actions { display: table-cell; white-space: nowrap; }
+.table-actions .btn + .btn { margin-inline-start: 6px; }
+
+/* A safety net: nothing inside the page may make the whole page scroll sideways. */
+.site-main { overflow-x: clip; }
+
+@media (max-width: 600px) {
+  .dashboard-toolbar { flex-direction: column; align-items: stretch; }
+  .toolbar-actions .btn { flex: 1 1 auto; }
+  .button-row .btn { flex: 1 1 100%; }
+  .form-section { padding: 18px; }
+}
+
+/* ===== Tables become a list of cards on a phone ===== */
+@media (max-width: 720px) {
+  .dashboard-table-wrap {
+    background: none;
+    border: none;
+    box-shadow: none;
+    overflow: visible;
+  }
+
+  .dashboard-table,
+  .dashboard-table tbody,
+  .dashboard-table tr,
+  .dashboard-table td { display: block; width: 100%; }
+
+  /* The header row is replaced by the data-label of every cell, but stays for screen readers. */
+  .dashboard-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .dashboard-table tbody tr {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+    padding: 4px 16px;
+    margin-bottom: 12px;
+  }
+  .dashboard-table tbody tr:hover { background: var(--color-surface); }
+
+  .dashboard-table td,
+  .dashboard-table td.mono {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 0;
+    border-bottom: 1px dashed var(--color-border);
+    white-space: normal;
+    text-align: right;
+    /* the cells are flex rows now: keep them right-to-left whatever .mono says */
+    direction: rtl;
+    unicode-bidi: normal;
+  }
+  .dashboard-table tr td:last-child { border-bottom: none; }
+
+  .dashboard-table td::before {
+    content: attr(data-label);
+    flex: none;
+    color: var(--color-ink-soft);
+    font-size: .78rem;
+    font-weight: 600;
+  }
+
+  /* values on the left, in a number font, never glued to the label */
+  .dashboard-table td.mono { font-family: var(--font-mono); }
+
+  /* "no data" row */
+  .dashboard-table td[colspan] {
+    display: block;
+    text-align: center;
+    color: var(--color-ink-soft);
+  }
+  .dashboard-table td[colspan]::before { content: none; }
+
+  /* a long status text may wrap inside its card */
+  .dashboard-table td .badge { white-space: normal; text-align: right; }
+
+  /* the buttons of a row use the full width */
+  .dashboard-table td.table-actions {
+    display: flex;
+    padding-top: 12px;
+  }
+  .dashboard-table td.table-actions::before { content: none; }
+  .dashboard-table td.table-actions .btn { flex: 1; text-align: center; }
 }

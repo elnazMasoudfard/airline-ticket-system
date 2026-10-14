@@ -20,19 +20,19 @@
     <tbody>
       {% for u in users %}
         <tr>
-          <td>{{ u.username }}</td>
-          <td>{{ u.email|default:"—" }}</td>
-          <td class="mono">{{ u.phone_number|default:"—" }}</td>
-          <td class="mono">{{ u.wallet_balance|floatformat:"0g" }} تومان</td>
-          <td>{{ u.date_joined|date:"Y/m/d" }}</td>
-          <td>
+          <td data-label="نام کاربری">{{ u.username }}</td>
+          <td data-label="ایمیل">{{ u.email|default:"—" }}</td>
+          <td class="mono" data-label="موبایل">{{ u.phone_number|default:"—" }}</td>
+          <td class="mono" data-label="کیف پول">{{ u.wallet_balance|floatformat:"0g" }} تومان</td>
+          <td data-label="تاریخ عضویت">{{ u.date_joined|date:"Y/m/d" }}</td>
+          <td data-label="دسترسی">
             {% if u.is_staff %}
               <span class="badge badge-success">مدیر</span>
             {% else %}
               <span class="badge badge-muted">کاربر عادی</span>
             {% endif %}
           </td>
-          <td>
+          <td class="table-actions">
             <a href="/admin/accounts/customuser/{{ u.pk }}/change/" target="_blank" class="btn btn-ghost btn-sm">مشاهده</a>
           </td>
         </tr>

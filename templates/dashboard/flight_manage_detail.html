@@ -28,7 +28,7 @@
   </form>
 {% endif %}
 
-<div class="profile-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 20px;">
+<div class="profile-grid stat-grid" style="margin-bottom: 20px;">
   <div class="profile-card">
     <span class="profile-card-label">مسیر</span>
     <span class="profile-card-value">{{ flight.route.origin.city }} ← {{ flight.route.destination.city }}</span>
@@ -47,7 +47,7 @@
   </div>
 </div>
 
-<div class="profile-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 28px;">
+<div class="profile-grid stat-grid stat-grid-money" style="margin-bottom: 28px;">
   <div class="profile-card">
     <span class="profile-card-label">درآمد ناخالص (پرداخت‌شده‌ها)</span>
     <span class="profile-card-value mono">{{ financials.gross|floatformat:"0g" }} تومان</span>
@@ -75,10 +75,10 @@
     <tbody>
       {% for seat_class in flight.seat_classes.all %}
         <tr>
-          <td>{{ seat_class.get_class_type_display }}</td>
-          <td class="mono">{{ seat_class.capacity }}</td>
-          <td class="mono">{{ seat_class.available_seats }}</td>
-          <td class="mono">{{ seat_class.final_price|floatformat:"0g" }} تومان</td>
+          <td data-label="کلاس">{{ seat_class.get_class_type_display }}</td>
+          <td class="mono" data-label="ظرفیت کل">{{ seat_class.capacity }}</td>
+          <td class="mono" data-label="صندلی باقی‌مانده">{{ seat_class.available_seats }}</td>
+          <td class="mono" data-label="قیمت نهایی">{{ seat_class.final_price|floatformat:"0g" }} تومان</td>
         </tr>
       {% empty %}
         <tr><td colspan="4">کلاس صندلی‌ای ثبت نشده است.</td></tr>
@@ -106,21 +106,21 @@
     <tbody>
       {% for reservation in reservations %}
         <tr>
-          <td class="mono">{{ reservation.booking_reference }}</td>
-          <td>{{ reservation.user.username }}</td>
-          <td>{{ reservation.seat_class.get_class_type_display }}</td>
-          <td class="mono">{{ reservation.seats_count }}</td>
-          <td class="mono"{% if not reservation.paid_at %} style="opacity: .5;" title="پرداخت نشده"{% endif %}>{{ reservation.total_paid_price|floatformat:"0g" }}</td>
-          <td>
+          <td class="mono" data-label="کد رزرو">{{ reservation.booking_reference }}</td>
+          <td data-label="کاربر">{{ reservation.user.username }}</td>
+          <td data-label="کلاس">{{ reservation.seat_class.get_class_type_display }}</td>
+          <td class="mono" data-label="تعداد صندلی">{{ reservation.seats_count }}</td>
+          <td class="mono" data-label="مبلغ رزرو"{% if not reservation.paid_at %} style="opacity: .5;" title="پرداخت نشده"{% endif %}>{{ reservation.total_paid_price|floatformat:"0g" }}</td>
+          <td data-label="وضعیت">
             {% reservation_status_badge reservation %}
           </td>
-          <td>
+          <td data-label="پرداخت">
             {% include 'dashboard/_payment_status.html' %}
           </td>
-          <td class="mono">
+          <td class="mono" data-label="استرداد">
             {% if reservation.paid_at and reservation.status == 'cancelled' %}{{ reservation.refund_amount|floatformat:"0g" }}{% else %}—{% endif %}
           </td>
-          <td>
+          <td class="table-actions">
             <a href="/admin/tickets/reservation/{{ reservation.pk }}/change/" target="_blank" class="btn btn-ghost btn-sm">مشاهده</a>
           </td>
         </tr>

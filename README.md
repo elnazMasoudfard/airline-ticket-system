@@ -43,7 +43,7 @@ This project was built as a university web programming course project, with an e
 - **Service layer** — booking, payment, cancellation and expiry live in `tickets/services.py`, so views, the dashboard and the management commands all share one implementation of the business rules
 - **Custom model managers/querysets** (`Flight.objects.upcoming()`, `Reservation.objects.active()`, etc.) centralize query logic instead of repeating filters across views
 - **DRY templates** — shared partials (`pagination.html`) and custom template tags (`{% flight_status_badge %}`, `{% reservation_status_badge %}`) eliminate duplicated markup across pages
-- **Custom RTL UI** — hand-built Persian interface (no frontend framework) with a boarding-pass-inspired visual identity. It is responsive (collapsible menu on small screens, wallet balance always visible in the header), accessible (skip link, `aria-current`, visible keyboard focus, screen-reader friendly messages and pagination), protects forms against double clicks, keeps search filters when paging, and prints a clean ticket
+- **Custom RTL UI** — hand-built Persian interface (no frontend framework) with a boarding-pass-inspired visual identity. It is responsive (collapsible menu on small screens, wallet balance always visible in the header, dashboard tables that turn into cards on phones), accessible (skip link, `aria-current`, visible keyboard focus, screen-reader friendly messages and pagination), protects forms against double clicks, keeps search filters when paging, and prints a clean ticket
 
 ## 🔄 Booking lifecycle & business rules
 
@@ -299,7 +299,7 @@ FinalProject/
 
 Core requirements and all optional bonus items (custom managers, email/SMS verification, template optimization, automated tests, Ajax) are complete. What remains is polish and real-world integration:
 
-- [ ] Mobile polish — card-style dashboard tables on small screens (the menu, forms, tickets and seat map are already responsive)
+- [ ] Mobile polish — a final check on real devices (the menu, forms, tickets, seat map and dashboard tables are already responsive)
 - [ ] Real payment gateway integration for wallet top-ups (e.g., ZarinPal sandbox)
 - [ ] Real SMS gateway integration (currently simulated via logging)
 - [ ] Redis cache for multi-server deployments (the database cache is enough for a single server)

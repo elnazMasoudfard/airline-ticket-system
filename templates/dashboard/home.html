@@ -4,7 +4,7 @@
 {% block content %}
 <h1 class="page-title">داشبورد مدیریت</h1>
 
-<div class="profile-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 32px;">
+<div class="profile-grid stat-grid" style="margin-bottom: 32px;">
   <a href="{% url 'dashboard:flight_manage_list' %}" class="profile-card stat-card-link">
     <span class="profile-card-label">کل پروازها</span>
     <span class="profile-card-value mono">{{ flight_count }}</span>
@@ -30,7 +30,7 @@
     و رزروهای لغو‌شده بدون پرداخت (مثلاً به‌دلیل پایان مهلت) هیچ سهمی در درآمد ندارند.
   </p>
 
-  <div class="profile-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 20px;">
+  <div class="profile-grid stat-grid stat-grid-money" style="margin-bottom: 20px;">
     <div class="profile-card">
       <span class="profile-card-label">درآمد ناخالص از فروش بلیط</span>
       <span class="profile-card-value mono">{{ total_gross|floatformat:"0g" }} تومان</span>
@@ -63,11 +63,11 @@
       <tbody>
         {% for flight in flights_financials %}
           <tr>
-            <td class="mono"><a href="{% url 'dashboard:flight_manage_detail' flight.pk %}">{{ flight.flight_number }}</a></td>
-            <td>{{ flight.route.origin.city }} ← {{ flight.route.destination.city }}</td>
-            <td class="mono">{{ flight.gross_paid|floatformat:"0g" }}</td>
-            <td class="mono">{{ flight.total_refunded|floatformat:"0g" }}</td>
-            <td class="mono">{{ flight.net_revenue|floatformat:"0g" }}</td>
+            <td class="mono" data-label="شماره پرواز"><a href="{% url 'dashboard:flight_manage_detail' flight.pk %}">{{ flight.flight_number }}</a></td>
+            <td data-label="مسیر">{{ flight.route.origin.city }} ← {{ flight.route.destination.city }}</td>
+            <td class="mono" data-label="درآمد ناخالص">{{ flight.gross_paid|floatformat:"0g" }}</td>
+            <td class="mono" data-label="استرداد">{{ flight.total_refunded|floatformat:"0g" }}</td>
+            <td class="mono" data-label="درآمد خالص">{{ flight.net_revenue|floatformat:"0g" }}</td>
           </tr>
         {% empty %}
           <tr><td colspan="5">هنوز داده‌ی مالی‌ای ثبت نشده است.</td></tr>
@@ -79,7 +79,7 @@
   {% include 'partials/pagination.html' %}
 </section>
 
-<div style="display: flex; gap: 12px; margin-top: 28px;">
+<div class="button-row">
   <a href="{% url 'dashboard:flight_manage_list' %}" class="btn btn-primary">مدیریت پروازها</a>
   <a href="{% url 'dashboard:flight_create' %}" class="btn btn-accent">ایجاد پرواز جدید</a>
   <a href="{% url 'admin:index' %}" class="btn btn-ghost">پنل ادمین جنگو</a>

@@ -7,7 +7,7 @@
   <h1 class="page-title" style="margin-bottom: 0;">
     مدیریت پروازها {% if is_upcoming_filter %}<span class="badge badge-muted">فقط آینده</span>{% endif %}
   </h1>
-  <div style="display:flex; gap:10px;">
+  <div class="toolbar-actions">
     {% if is_upcoming_filter %}
       <a href="{% url 'dashboard:flight_manage_list' %}" class="btn btn-ghost btn-sm">نمایش همه (شامل گذشته)</a>
     {% else %}
@@ -35,22 +35,24 @@
     <tbody>
       {% for flight in flights %}
         <tr>
-          <td class="mono">{{ flight.flight_number }}</td>
-          <td>{{ flight.route.origin.city }} ← {{ flight.route.destination.city }}</td>
-          <td>{{ flight.airline.name }}</td>
-          <td>
-            {{ flight.departure_datetime|date:"Y/m/d H:i" }}
-            {% if flight.departure_datetime < now %}
-              <span class="badge badge-muted">گذشته</span>
-            {% endif %}
+          <td class="mono" data-label="شماره پرواز">{{ flight.flight_number }}</td>
+          <td data-label="مسیر">{{ flight.route.origin.city }} ← {{ flight.route.destination.city }}</td>
+          <td data-label="ایرلاین">{{ flight.airline.name }}</td>
+          <td data-label="حرکت">
+            <span>
+              {{ flight.departure_datetime|date:"Y/m/d H:i" }}
+              {% if flight.departure_datetime < now %}
+                <span class="badge badge-muted">گذشته</span>
+              {% endif %}
+            </span>
           </td>
-          <td>
+          <td data-label="وضعیت">
             {% flight_status_badge flight %}
           </td>
-          <td class="mono">{{ flight.total_available_seats }}</td>
-          <td class="mono">{{ flight.paid_reservation_count }}</td>
-          <td class="mono" style="opacity: .7;">{{ flight.pending_reservation_count }}</td>
-          <td style="display:flex; gap:6px;">
+          <td class="mono" data-label="ظرفیت باقی‌مانده">{{ flight.total_available_seats }}</td>
+          <td class="mono" data-label="رزرو قطعی">{{ flight.paid_reservation_count }}</td>
+          <td class="mono" data-label="در انتظار پرداخت" style="opacity: .7;">{{ flight.pending_reservation_count }}</td>
+          <td class="table-actions">
             <a href="{% url 'dashboard:flight_manage_detail' flight.pk %}" class="btn btn-ghost btn-sm">مشاهده</a>
             <a href="{% url 'dashboard:flight_edit' flight.pk %}" class="btn btn-ghost btn-sm">ویرایش</a>
           </td>

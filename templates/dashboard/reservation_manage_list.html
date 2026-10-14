@@ -7,7 +7,7 @@
   <h1 class="page-title" style="margin-bottom: 0;">مدیریت رزروها</h1>
 </div>
 
-<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom: 18px;">
+<div class="filter-tabs" style="margin-bottom: 18px;">
   {% for key, label in filter_tabs %}
     <a
       href="{% url 'dashboard:reservation_manage_list' %}{% if key %}?filter={{ key }}{% endif %}"
@@ -35,22 +35,22 @@
     <tbody>
       {% for reservation in reservations %}
         <tr>
-          <td class="mono">{{ reservation.booking_reference }}</td>
-          <td>{{ reservation.user.username }}</td>
-          <td class="mono">{{ reservation.seat_class.flight.flight_number }}</td>
-          <td>{{ reservation.seat_class.flight.route.origin.city }} ← {{ reservation.seat_class.flight.route.destination.city }}</td>
-          <td class="mono">{{ reservation.seats_count }}</td>
-          <td class="mono"{% if not reservation.paid_at %} style="opacity: .5;" title="پرداخت نشده"{% endif %}>{{ reservation.total_paid_price|floatformat:"0g" }}</td>
-          <td>
+          <td class="mono" data-label="کد رزرو">{{ reservation.booking_reference }}</td>
+          <td data-label="کاربر">{{ reservation.user.username }}</td>
+          <td class="mono" data-label="پرواز">{{ reservation.seat_class.flight.flight_number }}</td>
+          <td data-label="مسیر">{{ reservation.seat_class.flight.route.origin.city }} ← {{ reservation.seat_class.flight.route.destination.city }}</td>
+          <td class="mono" data-label="تعداد صندلی">{{ reservation.seats_count }}</td>
+          <td class="mono" data-label="مبلغ رزرو"{% if not reservation.paid_at %} style="opacity: .5;" title="پرداخت نشده"{% endif %}>{{ reservation.total_paid_price|floatformat:"0g" }}</td>
+          <td data-label="وضعیت">
             {% reservation_status_badge reservation %}
           </td>
-          <td>
+          <td data-label="پرداخت">
             {% include 'dashboard/_payment_status.html' %}
           </td>
-          <td class="mono">
+          <td class="mono" data-label="استرداد">
             {% if reservation.paid_at and reservation.status == 'cancelled' %}{{ reservation.refund_amount|floatformat:"0g" }}{% else %}—{% endif %}
           </td>
-          <td>
+          <td class="table-actions">
             <a href="/admin/tickets/reservation/{{ reservation.pk }}/change/" target="_blank" class="btn btn-ghost btn-sm">مشاهده</a>
           </td>
         </tr>
