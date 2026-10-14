@@ -135,7 +135,7 @@ pip install -r requirements.txt
 
 ### Environment setup
 
-Create a `.env` file in the project root (see `.env.example`):
+Create a `.env` file in the project root (see `.env.example`). Every setting that differs between machines is read from it through `python-decouple`:
 
 ```env
 # Database
@@ -155,39 +155,25 @@ DEBUG=True
 # EMAIL_HOST_USER=your_email@gmail.com
 # EMAIL_HOST_PASSWORD=your_gmail_app_password
 # DEFAULT_FROM_EMAIL=your_email@gmail.com
+
+# Deployment (optional)
+# ALLOWED_HOSTS=example.com,www.example.com     # default: localhost,127.0.0.1,[::1]
+# CSRF_TRUSTED_ORIGINS=https://example.com
+# USE_HTTPS=True                                 # secure cookies + redirect to https
+# TRUST_X_FORWARDED_FOR=True                     # only behind a reverse proxy you control
 ```
 
-### Settings checklist
+### Settings overview
 
-Besides the `.env` values, `airline_system/settings.py` needs these entries:
+`airline_system/settings.py` already contains everything the project needs; this is what matters:
 
-```python
-AUTH_USER_MODEL = 'accounts.CustomUser'
-LOGIN_URL = 'accounts:login'          # where anonymous users are sent (the ?next= target is kept)
+- `AUTH_USER_MODEL = 'accounts.CustomUser'` and `LOGIN_URL = 'accounts:login'` (anonymous users are sent to the login page and the `?next=` target is kept).
+- A **database cache** (`CACHES`), shared by every server process so the phone-verification lockout works with several workers. Create its table once with `python manage.py createcachetable`.
+- A logger named `admin_panel` for the actions made in the Django admin (written by `core/signals.py`), next to the per-app loggers.
+- While `python manage.py test` runs, log output is switched off so the terminal stays readable and the real log files stay clean.
+- `DEBUG`, `ALLOWED_HOSTS`, e-mail and the booking rules below can all be changed from `.env` without touching the code.
 
-# Shared between processes, so the phone-verification lockout works with several workers.
-# (LocMemCache keeps a separate counter per process.)
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
-        'LOCATION': 'django_cache_table',
-    }
-}
-```
-
-Logging: besides the existing handlers, add a logger for admin-panel actions (the signal in `core/signals.py` writes to it):
-
-```python
-LOGGING['loggers']['admin_panel'] = {
-    'handlers': ['console', 'file_general', 'file_security'],
-    'level': 'INFO',
-    'propagate': False,
-}
-```
-
-(or add the same entry inside the `'loggers'` dictionary of `LOGGING`). Without it these messages are not recorded.
-
-Optional settings (defaults in parentheses):
+Optional settings (defaults in parentheses; each can also be put in `.env`):
 
 | Setting | Meaning |
 |---|---|
@@ -196,6 +182,8 @@ Optional settings (defaults in parentheses):
 | `TICKETS_MAX_PENDING_RESERVATIONS_PER_USER` (3) | open unpaid reservations per user |
 | `TICKETS_VALIDATE_NATIONAL_ID_CHECKSUM` (`False`) | enforce the Iranian national-ID check digit (turn on once your data uses real codes) |
 | `TRUST_X_FORWARDED_FOR` (`False`) | take the client IP for the security log from `X-Forwarded-For` (only behind a proxy you control) |
+| `USE_HTTPS` (`False`) | redirect to https and mark the session and CSRF cookies as secure |
+| `EMAIL_TIMEOUT` (10) | seconds to wait for the mail server before giving up |
 
 ### Database setup
 

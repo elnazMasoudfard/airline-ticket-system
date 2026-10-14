@@ -8,16 +8,22 @@ https://docs.djangoproject.com/en/6.1/topics/settings/
 
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
+
+Every value that differs between machines (secrets, database, hosts, e-mail ...) is read
+from environment variables or from the `.env` file in the project root, through
+python-decouple. See README.md for the full list.
 """
 
+import sys
 from pathlib import Path
-from decouple import config
-import os
-from dotenv import load_dotenv
-load_dotenv()
+
+from decouple import Csv, config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# True while running `python manage.py test` (used to keep log files clean, see LOGGING).
+TESTING = 'test' in sys.argv
 
 
 # Quick-start development settings - unsuitable for production
@@ -25,10 +31,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = config('SECRET_KEY')
+
+# SECURITY WARNING: never run with DEBUG=True in production.
 DEBUG = config('DEBUG', default=False, cast=bool)
 
+# Hosts this site may be served from. The defaults let `runserver` work on this computer
+# even with DEBUG=False; on a real server list the domain, e.g. ALLOWED_HOSTS=example.com
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,[::1]', cast=Csv())
 
-ALLOWED_HOSTS = []
+# Needed when the site is served over HTTPS from a domain, e.g. https://example.com
+CSRF_TRUSTED_ORIGINS = config('CSRF_TRUSTED_ORIGINS', default='', cast=Csv())
 
 
 # Application definition
@@ -49,14 +61,12 @@ INSTALLED_APPS = [
 
 # Auth settings
 AUTH_USER_MODEL = 'accounts.CustomUser'
-
-AUTH_USER_MODEL = 'accounts.CustomUser'
 LOGIN_URL = 'accounts:login'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'flights.middleware.FlightStatusSyncMiddleware', 
+    'flights.middleware.FlightStatusSyncMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -74,6 +84,7 @@ TEMPLATES = [
         'OPTIONS': {
             'context_processors': [
                 'django.template.context_processors.debug',
+                # `request` is required by templates/base.html (current page in the menu)
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
@@ -99,12 +110,21 @@ DATABASES = {
     }
 }
 
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+# Cache
+# A database cache is shared by every server process, which the phone-verification
+# lockout needs (the default in-memory cache keeps a separate counter per process).
+# Create its table once with:  python manage.py createcachetable
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
         'LOCATION': 'django_cache_table',
+        'OPTIONS': {'MAX_ENTRIES': 10000},
     }
 }
+
 
 # Password validation
 # https://docs.djangoproject.com/en/6.1/ref/settings/#auth-password-validators
@@ -142,6 +162,8 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
+# Where `python manage.py collectstatic` gathers everything for a real web server.
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
@@ -150,31 +172,68 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # Email Configuration
 # ==============================
 # Default: Console Backend (no actual email is sent; the text is simply printed to the terminal)
-# For a demo using real email: Configure these 4 values ​​in .env (no need to modify this file):
+# For a demo using real email: configure these values in .env (no need to modify this file):
 #   EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
 #   EMAIL_HOST_USER=your_email@gmail.com
 #   EMAIL_HOST_PASSWORD=your_gmail_app_password
 #   DEFAULT_FROM_EMAIL=your_email@gmail.com
 
-EMAIL_BACKEND = os.getenv(
-    'EMAIL_BACKEND',
-    'django.core.mail.backends.console.EmailBackend'
-)
+EMAIL_BACKEND = config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
 
-EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
-EMAIL_PORT = int(os.getenv('EMAIL_PORT', 465))
-EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', 'True').lower() in ('true', '1')
-EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'False').lower() in ('true', '1')
+EMAIL_HOST = config('EMAIL_HOST', default='smtp.gmail.com')
+EMAIL_PORT = config('EMAIL_PORT', default=465, cast=int)
+EMAIL_USE_SSL = config('EMAIL_USE_SSL', default=True, cast=bool)
+EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=False, cast=bool)
+# A slow or unreachable mail server must not freeze the registration page.
+EMAIL_TIMEOUT = config('EMAIL_TIMEOUT', default=10, cast=int)
 
-EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
-EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER or 'noreply@airline.local'
 
 # Session settings
-SESSION_ENGINE = 'django.contrib.sessions.backends.db'  
+SESSION_ENGINE = 'django.contrib.sessions.backends.db'
 SESSION_COOKIE_AGE = 60 * 60 * 24 * 7  # یک هفته (به ثانیه)
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 SESSION_SAVE_EVERY_REQUEST = False
+
+
+# ==============================
+# HTTPS / production hardening
+# ==============================
+# Off by default so that `runserver` keeps working over plain http. On a server that
+# really serves the site over HTTPS set USE_HTTPS=True in .env.
+USE_HTTPS = config('USE_HTTPS', default=False, cast=bool)
+
+# Set TRUST_X_FORWARDED_FOR=True ONLY when the site runs behind a reverse proxy you control
+# (nginx, a load balancer ...). It makes the security log use the real client IP (see
+# accounts/utils.py) and lets Django know the original request was HTTPS.
+TRUST_X_FORWARDED_FOR = config('TRUST_X_FORWARDED_FOR', default=False, cast=bool)
+
+if USE_HTTPS:
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    # 0 = HSTS off. Raise it (e.g. 31536000) only once HTTPS works everywhere.
+    SECURE_HSTS_SECONDS = config('HSTS_SECONDS', default=0, cast=int)
+    if TRUST_X_FORWARDED_FOR:
+        SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+
+# ==============================
+# Booking rules (see README.md, "Booking lifecycle & business rules")
+# ==============================
+# How long unpaid seats stay held, the largest group per reservation, and the number of
+# unpaid reservations one user may keep open at the same time.
+TICKETS_PAYMENT_WINDOW_MINUTES = config('TICKETS_PAYMENT_WINDOW_MINUTES', default=30, cast=int)
+TICKETS_MAX_SEATS_PER_RESERVATION = config('TICKETS_MAX_SEATS_PER_RESERVATION', default=9, cast=int)
+TICKETS_MAX_PENDING_RESERVATIONS_PER_USER = config(
+    'TICKETS_MAX_PENDING_RESERVATIONS_PER_USER', default=3, cast=int
+)
+# Check the Iranian national-ID check digit. Turn on once your data uses real national codes.
+TICKETS_VALIDATE_NATIONAL_ID_CHECKSUM = config(
+    'TICKETS_VALIDATE_NATIONAL_ID_CHECKSUM', default=False, cast=bool
+)
 
 
 # ==============================
@@ -235,7 +294,7 @@ LOGGING = {
     },
 
     'loggers': {
-        # jango logs,server errors
+        # django logs, server errors
         'django': {
             'handlers': ['console', 'file_errors'],
             'level': 'WARNING',
@@ -268,5 +327,18 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        # actions made in the Django admin panel (core/signals.py)
+        'admin_panel': {
+            'handlers': ['console', 'file_general', 'file_security'],
+            'level': 'INFO',
+            'propagate': False,
+        },
     },
 }
+
+if TESTING:
+    # While the tests run, keep the terminal readable and do not write test noise into the
+    # real log files. (assertLogs in the tests does not depend on these handlers.)
+    LOGGING['handlers'] = {'null': {'class': 'logging.NullHandler'}}
+    for _logger in LOGGING['loggers'].values():
+        _logger['handlers'] = ['null']
