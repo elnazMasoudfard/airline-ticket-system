@@ -28,6 +28,15 @@ This project was built as a university web programming course project, with an e
 - **Simulated phone (SMS) verification** — a 6-digit one-time code flow with a lockout after 5 wrong attempts (15 minutes); since no real SMS gateway is connected, the code is logged instead of texted
 - **Structured logging** — rotating file handlers (`general.log`, `errors.log`, `security.log`) with a dedicated logger per app, covering auth events, wallet transactions, booking lifecycle, and staff actions. Client IPs are only taken from `X-Forwarded-For` when explicitly trusted, and user-supplied text is sanitised against log injection. Every Django admin action (add/change/delete, including bulk actions on several objects) is also written to the log through a dedicated `admin_panel` logger; deletions are raised as warnings and free text is sanitised before it reaches the file.
 
+### Notifications
+- **Bell in the navbar** for every signed-in user, with the number of unread notifications (`9+` above nine). The bell is highlighted while something is unread
+- **Notifications page** (`/notifications/`) with an *All / Unread* switch, a **"mark all as read"** button and a *"mark as read"* button on every unread item. The profile page shows the latest five
+- **Unread stands out:** tinted background, accent edge, a dot and a **bold** title; read ones are plain. Screen readers get an extra "(unread)" text
+- **Linked to the page it talks about:** clicking a notification marks it as read and opens the related reservation (which shows the flight). Links are always addresses inside this site (no open redirects)
+- **Events:** payment succeeded, payment deadline about to end (5 minutes before, by default), reservation expired, flight cancelled by the airline (with the refund), refund after a cancellation, wallet top-up
+- **Reliable:** a notification is written in the same database transaction as the event it reports, so a rolled-back payment never leaves a notification behind and a committed one never loses it. Each event notifies a user once (a dedupe key), and a failure to write a notification can never break the booking itself
+- The app is self-contained: `notifications` imports nothing from `tickets`, `flights` or `accounts`; they only call `notify(...)`
+
 ### Staff Dashboard
 - A separate, staff-only management area (distinct from the Django admin) for:
   - Creating and editing flights with inline seat-class management (changing a class capacity also adds or removes the real seat rows; booked seats are never touched)
@@ -81,7 +90,7 @@ select seats ──► enter passengers ──► pay from wallet ──► (opt
 
 ## 🏗️ Architecture
 
-The project is split into five Django apps, each with a single responsibility:
+The project is split into six Django apps, each with a single responsibility:
 
 ```
 airline_system/
@@ -89,7 +98,8 @@ airline_system/
 ├── accounts/    # Custom user model, authentication, wallet + ledger, email/phone verification
 ├── flights/     # Airports, airlines, routes, flights, seat classes, individual seats, status sync
 ├── tickets/     # Reservations, passengers, seat-selection / payment / cancellation workflow
-└── dashboard/   # Staff-only management area (no models of its own — composes the apps above)
+├── dashboard/   # Staff-only management area (no models of its own — composes the apps above)
+└── notifications/ # In-app notifications: model, bell, list page, cleanup command
 ```
 
 ### Data model highlights
@@ -184,6 +194,7 @@ Optional settings (defaults in parentheses; each can also be put in `.env`):
 | `TRUST_X_FORWARDED_FOR` (`False`) | take the client IP for the security log from `X-Forwarded-For` (only behind a proxy you control) |
 | `USE_HTTPS` (`False`) | redirect to https and mark the session and CSRF cookies as secure |
 | `EMAIL_TIMEOUT` (10) | seconds to wait for the mail server before giving up |
+| `TICKETS_EXPIRY_WARNING_MINUTES` (5) | how many minutes before the payment deadline the warning notification is sent |
 
 ### Database setup
 
@@ -206,7 +217,7 @@ Visit `http://127.0.0.1:8000/` for the app, `http://127.0.0.1:8000/admin/` for t
 
 ### Scheduled job: releasing unpaid reservations
 
-Unpaid reservations are also expired lazily whenever one of their pages is opened, but seats held by someone who never comes back are only released by the periodic command. Run it **every minute**:
+Unpaid reservations are also expired lazily whenever one of their pages is opened, but seats held by someone who never comes back are only released by the periodic command. The same command sends the "your payment time is almost over" notification, so run it **every minute**:
 
 ```bash
 # Linux/macOS (crontab -e)
@@ -234,10 +245,11 @@ After creating a flight with seat classes (via the dashboard or Django admin), r
 ### Useful management commands
 
 ```bash
-python manage.py expire_reservations              # cancel unpaid reservations whose hold expired and release their seats
+python manage.py expire_reservations              # cancel unpaid reservations whose hold expired and release their seats, and warn users whose hold is about to end
 python manage.py sync_flight_statuses             # manually trigger the scheduled/active/completed transition
 python manage.py recalculate_seat_availability    # reconcile seat counts if data ever drifts out of sync
 python manage.py recalculate_seat_availability --dry-run   # only show the differences, change nothing
+python manage.py cleanup_notifications --days 90  # delete notifications that were read more than 90 days ago (unread ones are kept)
 ```
 
 `recalculate_seat_availability` counts paid reservations **and** unpaid ones that are still inside their hold time as holding seats, and releases expired holds first.
@@ -281,6 +293,14 @@ FinalProject/
 │   ├── mixins.py            # StaffRequiredMixin
 │   ├── tests.py             # Access control, financial totals, flight cancellation
 │   └── urls.py
+├── notifications/
+│   ├── models.py             # Notification (kind, text, link, read_at, dedupe key)
+│   ├── services.py           # notify(), unread count, mark read, cleanup
+│   ├── views.py              # List, open (marks read and redirects), mark one / all as read
+│   ├── templatetags/notification_tags.py  # unread counter, latest notifications, "time ago"
+│   ├── management/commands/cleanup_notifications.py
+│   ├── admin.py              # View-only
+│   └── tests.py
 ├── core/
 │   ├── models.py             # TimeStampedModel abstract base
 │   ├── signals.py            # Logs Django admin actions (single and bulk) via the `admin_panel` logger
@@ -302,6 +322,7 @@ Core requirements and all optional bonus items (custom managers, email/SMS verif
 - [ ] Mobile polish — a final check on real devices (the menu, forms, tickets, seat map and dashboard tables are already responsive)
 - [ ] Real payment gateway integration for wallet top-ups (e.g., ZarinPal sandbox)
 - [ ] Real SMS gateway integration (currently simulated via logging)
+- [ ] Optional e-mail copy of important notifications, and a live (push) badge instead of reloading the page
 - [ ] Redis cache for multi-server deployments (the database cache is enough for a single server)
 - [ ] Deployment (Docker + a hosting platform)
 

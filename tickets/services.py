@@ -30,10 +30,13 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import F, Q
+from django.urls import reverse
 from django.utils import timezone
 
 from accounts.models import WalletTransaction
 from flights.models import Flight, Seat, SeatClass
+from notifications.models import Notification
+from notifications.services import notify
 
 from .models import Passenger, Reservation, ReservationSeat
 
@@ -47,6 +50,8 @@ MAX_SEATS_PER_RESERVATION = getattr(settings, 'TICKETS_MAX_SEATS_PER_RESERVATION
 MAX_PENDING_RESERVATIONS_PER_USER = getattr(
     settings, 'TICKETS_MAX_PENDING_RESERVATIONS_PER_USER', 3
 )
+# How many minutes before the payment deadline the user gets a warning notification.
+EXPIRY_WARNING_MINUTES = getattr(settings, 'TICKETS_EXPIRY_WARNING_MINUTES', 5)
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +128,24 @@ def _log_expired(reservation, username, source):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def _reservation_url(reservation):
+    """The reservation page, used as the target of notifications."""
+    return reverse(
+        'tickets:reservation_detail',
+        kwargs={'booking_reference': reservation.booking_reference},
+    )
+
+
+def _flight_label(flight):
+    """'544 (شیراز ← تبریز)' for notification texts."""
+    route = flight.route
+    return f"{flight.flight_number} ({route.origin.city} ← {route.destination.city})"
+
+
+def _money(amount):
+    return f"{amount:,.0f}"
+
+
 def is_flight_bookable(flight):
     """A flight can be booked only if it is scheduled and departs in the future."""
     return (
@@ -427,6 +450,17 @@ def expire_reservation(reservation_pk, source='تسک زمان‌بندی'):
         _cancel_locked(reservation, Reservation.CancellationReason.TIMEOUT)
         username = reservation.user.username
 
+        notify(
+            reservation.user,
+            Notification.Kind.RESERVATION_EXPIRED,
+            "مهلت پرداخت رزرو تمام شد",
+            f"رزرو {reservation.booking_reference} برای پرواز "
+            f"{_flight_label(reservation.seat_class.flight)} به‌دلیل پایان مهلت پرداخت "
+            "لغو شد و صندلی‌ها آزاد شدند.",
+            url=_reservation_url(reservation),
+            dedupe_key=f"expired:{reservation.booking_reference}",
+        )
+
     _log_expired(reservation, username, source)
     return True
 
@@ -456,6 +490,43 @@ def expire_pending_reservations():
         if expire_reservation(pk):
             expired_count += 1
     return expired_count
+
+
+def warn_expiring_reservations():
+    """
+    Tell users whose unpaid reservation runs out of time within EXPIRY_WARNING_MINUTES.
+    Each reservation is warned about only once (the notification has a dedupe key), so it is
+    safe to run this every minute. Returns how many NEW warnings were created.
+    """
+    now = timezone.now()
+    soon = now + timedelta(minutes=EXPIRY_WARNING_MINUTES)
+
+    expiring = (
+        Reservation.objects
+        .filter(
+            status=Reservation.StatusChoices.PENDING_PAYMENT,
+            payment_expires_at__gt=now,
+            payment_expires_at__lte=soon,
+        )
+        .select_related('user', 'seat_class__flight__route__origin', 'seat_class__flight__route__destination')
+    )
+
+    warned = 0
+    for reservation in expiring:
+        deadline = timezone.localtime(reservation.payment_expires_at).strftime('%H:%M')
+        created = notify(
+            reservation.user,
+            Notification.Kind.RESERVATION_EXPIRING,
+            "مهلت پرداخت رزرو رو به پایان است",
+            f"برای نهایی کردن رزرو {reservation.booking_reference} "
+            f"(پرواز {_flight_label(reservation.seat_class.flight)}) تا ساعت {deadline} فرصت دارید؛ "
+            "بعد از آن صندلی‌ها آزاد می‌شوند.",
+            url=_reservation_url(reservation),
+            dedupe_key=f"expiring:{reservation.booking_reference}",
+        )
+        if created:
+            warned += 1
+    return warned
 
 
 def cancellation_blocked_reason(reservation):
@@ -553,6 +624,18 @@ def cancel_reservation(*, booking_reference, user):
                 kind=WalletTransaction.KindChoices.REFUND,
                 reference=reservation.booking_reference,
                 description=f"استرداد رزرو {reservation.booking_reference} (پرواز {flight.flight_number})",
+            )
+            penalty_text = (
+                f" (پس از کسر {penalty_percent:.0f}٪ جریمه‌ی کنسلی)" if penalty_percent > 0 else ""
+            )
+            notify(
+                wallet_user,
+                Notification.Kind.REFUND,
+                "مبلغ رزرو به کیف پول برگشت",
+                f"رزرو {reservation.booking_reference} لغو شد و {_money(refund_amount)} تومان"
+                f"{penalty_text} به کیف پول شما برگشت.",
+                url=_reservation_url(reservation),
+                dedupe_key=f"refund:{reservation.booking_reference}",
             )
 
     logger.info(
@@ -653,6 +736,16 @@ def pay_reservation(*, booking_reference, user):
         reservation.paid_at = timezone.now()
         reservation.save(update_fields=['status', 'paid_at', 'updated_at'])
 
+        notify(
+            wallet_user,
+            Notification.Kind.PAYMENT_SUCCESS,
+            "بلیت شما صادر شد",
+            f"پرداخت رزرو {reservation.booking_reference} برای پرواز {_flight_label(flight)} "
+            f"به مبلغ {_money(reservation.total_paid_price)} تومان با موفقیت انجام شد.",
+            url=_reservation_url(reservation),
+            dedupe_key=f"paid:{reservation.booking_reference}",
+        )
+
     logger.info(
         "پرداخت موفق: %s",
         _fmt(
@@ -701,6 +794,26 @@ def _cancel_reservation_for_cancelled_flight(reservation_pk):
                 reference=reservation.booking_reference,
                 description=f"استرداد کامل رزرو {reservation.booking_reference} به دلیل لغو پرواز",
             )
+
+        label = _flight_label(reservation.seat_class.flight)
+        if was_paid:
+            message = (
+                f"پرواز {label} توسط ایرلاین لغو شد و مبلغ {_money(refund_amount)} تومان "
+                f"بدون جریمه به کیف پول شما برگشت."
+            )
+        else:
+            message = (
+                f"پرواز {label} لغو شد؛ رزرو پرداخت‌نشده‌ی {reservation.booking_reference} "
+                f"هم لغو شد و مبلغی از شما کسر نشده بود."
+            )
+        notify(
+            reservation.user,
+            Notification.Kind.FLIGHT_CANCELLED,
+            "پرواز شما لغو شد",
+            message,
+            url=_reservation_url(reservation),
+            dedupe_key=f"flight_cancelled:{reservation.booking_reference}",
+        )
 
     return was_paid, refund_amount
 

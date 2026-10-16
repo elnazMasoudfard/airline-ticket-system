@@ -330,3 +330,28 @@ class DepositViewTests(TestCase):
         self.client.post(reverse('accounts:deposit'), {'amount': '500'})
         self.user.refresh_from_db()
         self.assertEqual(self.user.wallet_balance, Decimal('0.00'))
+
+
+# ======================================================================
+# Wallet top-up notification
+# ======================================================================
+from notifications.models import Notification  # noqa: E402
+
+
+class DepositNotificationTests(TestCase):
+
+    def setUp(self):
+        self.user = CustomUser.objects.create_user(username='traveler', password='pass12345')
+        self.client.force_login(self.user)
+
+    def test_topping_up_the_wallet_notifies_the_user(self):
+        self.client.post(reverse('accounts:deposit'), {'amount': '50000'})
+
+        note = Notification.objects.get(user=self.user)
+        self.assertEqual(note.kind, Notification.Kind.WALLET_CHARGED)
+        self.assertIn('50,000', note.message)
+        self.assertEqual(note.url, reverse('accounts:profile'))
+
+    def test_an_invalid_amount_does_not_notify(self):
+        self.client.post(reverse('accounts:deposit'), {'amount': '500'})  # below the minimum
+        self.assertEqual(Notification.objects.count(), 0)

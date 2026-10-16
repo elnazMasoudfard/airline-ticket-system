@@ -14,6 +14,9 @@ from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.generic import DetailView, FormView, UpdateView, View
 
+from notifications.models import Notification
+from notifications.services import notify
+
 from .forms import DepositForm, LoginForm, PhoneVerificationForm, ProfileEditForm, RegistrationForm
 from .models import CustomUser, EmailVerificationToken, PhoneVerificationCode, WalletTransaction
 from .utils import get_client_ip, sanitize_for_log
@@ -374,10 +377,19 @@ class DepositView(LoginRequiredMixin, FormView):
     def form_valid(self, form):
         amount = form.cleaned_data['amount']
         # deposit() writes the WalletTransaction and the "شارژ کیف پول" log line.
-        self.request.user.deposit(
+        entry = self.request.user.deposit(
             amount,
             kind=WalletTransaction.KindChoices.CHARGE,
             description="شارژ شبیه‌سازی‌شده (بدون درگاه پرداخت واقعی)",
+        )
+        notify(
+            self.request.user,
+            Notification.Kind.WALLET_CHARGED,
+            "کیف پول شارژ شد",
+            f"مبلغ {amount:,.0f} تومان به کیف پول شما اضافه شد. "
+            f"موجودی جدید: {entry.balance_after:,.0f} تومان.",
+            url=reverse('accounts:profile'),
+            dedupe_key=f"wallet:{entry.pk}",
         )
         messages.success(
             self.request,

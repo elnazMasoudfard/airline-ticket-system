@@ -13,6 +13,7 @@ from django.utils import timezone
 from accounts.models import CustomUser, WalletTransaction
 from flights.models import Airline, Airport, Flight, Route, Seat, SeatClass
 from flights.services import generate_seats_for_flight
+from notifications.models import Notification
 
 from .admin import PassengerAdmin, ReservationAdmin
 from .forms import PassengerForm, is_valid_iranian_national_id, normalize_digits
@@ -22,6 +23,7 @@ from .services import (
     PAYMENT_WINDOW_MINUTES,
     BookingError,
     PayResult,
+    cancel_flight_and_refund,
     cancellation_blocked_reason,
     column_index,
     create_pending_reservation,
@@ -29,6 +31,7 @@ from .services import (
     get_penalty_percent,
     has_adjacent_block,
     pay_reservation,
+    warn_expiring_reservations,
 )
 
 STATUS = Reservation.StatusChoices
@@ -1173,3 +1176,165 @@ class AdminReadOnlyTests(TestCase):
             self.assertFalse(inline.has_add_permission(None, None))
             self.assertFalse(inline.has_change_permission(None, None))
             self.assertFalse(inline.has_delete_permission(None, None))
+
+
+# ======================================================================
+# Notifications created by the booking flow
+# ======================================================================
+class NotificationEventTests(TicketsTestCase):
+
+    def notes(self, kind=None, user=None):
+        queryset = Notification.objects.filter(user=user or self.user)
+        return queryset.filter(kind=kind) if kind else queryset
+
+    def deadline_in(self, reservation, **delta):
+        Reservation.objects.filter(pk=reservation.pk).update(
+            payment_expires_at=timezone.now() + timedelta(**delta)
+        )
+
+    # ----- payment ------------------------------------------------------------
+    def test_payment_notifies_and_links_to_the_reservation(self):
+        reservation = self.book_and_pay()
+
+        note = self.notes(Notification.Kind.PAYMENT_SUCCESS).get()
+
+        self.assertEqual(note.url, self.detail_url(reservation))
+        self.assertIn(reservation.booking_reference, note.message)
+        self.assertIn('IR400', note.message)
+        self.assertIsNone(note.read_at)
+
+    def test_paying_twice_notifies_only_once(self):
+        reservation = self.book_with_passengers()
+        self.pay(reservation)
+        self.pay(reservation)
+        self.assertEqual(self.notes(Notification.Kind.PAYMENT_SUCCESS).count(), 1)
+
+    def test_a_refused_payment_does_not_notify(self):
+        poor = CustomUser.objects.create_user(username='poor', password='pass12345')
+        self.client.force_login(poor)
+        reservation = self.book_with_passengers()
+
+        self.pay(reservation)  # not enough money
+
+        self.assertEqual(self.notes(user=poor).count(), 0)
+
+    # ----- expiry -------------------------------------------------------------
+    def test_an_expired_reservation_notifies(self):
+        reservation = self.book(1)
+        self.expire_now(reservation)
+
+        expire_pending_reservations()
+
+        note = self.notes(Notification.Kind.RESERVATION_EXPIRED).get()
+        self.assertEqual(note.url, self.detail_url(reservation))
+        self.assertIn(reservation.booking_reference, note.message)
+
+    def test_expiry_found_by_opening_the_page_notifies_too(self):
+        reservation = self.book(1)
+        self.expire_now(reservation)
+
+        self.client.get(self.detail_url(reservation))
+
+        self.assertEqual(self.notes(Notification.Kind.RESERVATION_EXPIRED).count(), 1)
+
+    def test_cancelling_an_unpaid_reservation_yourself_does_not_notify(self):
+        reservation = self.book(1)
+        self.client.post(self.cancel_url(reservation))
+        self.assertEqual(self.notes().count(), 0)
+
+    # ----- warning before the deadline -----------------------------------------
+    def test_a_warning_is_sent_when_the_deadline_is_close(self):
+        reservation = self.book(1)
+        self.deadline_in(reservation, minutes=3)
+
+        self.assertEqual(warn_expiring_reservations(), 1)
+
+        note = self.notes(Notification.Kind.RESERVATION_EXPIRING).get()
+        self.assertEqual(note.url, self.detail_url(reservation))
+        self.assertIn(reservation.booking_reference, note.message)
+
+    def test_each_reservation_is_warned_about_only_once(self):
+        reservation = self.book(1)
+        self.deadline_in(reservation, minutes=3)
+
+        self.assertEqual(warn_expiring_reservations(), 1)
+        self.assertEqual(warn_expiring_reservations(), 0)
+        self.assertEqual(self.notes(Notification.Kind.RESERVATION_EXPIRING).count(), 1)
+
+    def test_no_warning_while_there_is_plenty_of_time(self):
+        self.book(1)  # 30 minutes left
+        self.assertEqual(warn_expiring_reservations(), 0)
+
+    def test_no_warning_for_a_reservation_that_is_already_overdue(self):
+        reservation = self.book(1)
+        self.expire_now(reservation)
+        self.assertEqual(warn_expiring_reservations(), 0)
+
+    def test_no_warning_for_a_paid_reservation(self):
+        reservation = self.book_and_pay()
+        Reservation.objects.filter(pk=reservation.pk).update(
+            payment_expires_at=timezone.now() + timedelta(minutes=2)
+        )
+        self.assertEqual(warn_expiring_reservations(), 0)
+
+    def test_the_scheduled_command_expires_and_warns(self):
+        overdue = self.book(1)
+        self.expire_now(overdue)
+        soon = self.book(1)
+        self.deadline_in(soon, minutes=2)
+        out = StringIO()
+
+        call_command('expire_reservations', stdout=out)
+
+        self.assertIn('1 reservation(s) expired', out.getvalue())
+        self.assertIn('1 expiry warning(s) sent', out.getvalue())
+
+    # ----- cancellation and refunds --------------------------------------------
+    def test_cancelling_a_paid_reservation_notifies_about_the_refund(self):
+        self.update_flight(cancellation_penalty_percent=20)
+        reservation = self.book_and_pay()
+
+        self.client.post(self.cancel_url(reservation))
+
+        note = self.notes(Notification.Kind.REFUND).get()
+        self.assertEqual(note.url, self.detail_url(reservation))
+        self.assertIn('20', note.message)
+        self.assertIn(reservation.booking_reference, note.message)
+
+    def test_no_refund_notification_when_nothing_is_refunded(self):
+        self.update_flight(cancellation_penalty_percent=100)
+        reservation = self.book_and_pay()
+
+        self.client.post(self.cancel_url(reservation))
+
+        self.assertEqual(self.notes(Notification.Kind.REFUND).count(), 0)
+
+    def test_a_cancelled_flight_notifies_paid_and_unpaid_passengers(self):
+        paid = self.book_and_pay()
+        unpaid = self.book(1)
+
+        cancel_flight_and_refund(self.flight.pk)
+
+        notes = {n.url: n for n in self.notes(Notification.Kind.FLIGHT_CANCELLED)}
+        self.assertEqual(set(notes), {self.detail_url(paid), self.detail_url(unpaid)})
+        self.assertIn('بدون جریمه', notes[self.detail_url(paid)].message)
+        self.assertIn('کسر نشده', notes[self.detail_url(unpaid)].message)
+
+    def test_cancelling_the_flight_again_does_not_notify_again(self):
+        self.book_and_pay()
+        cancel_flight_and_refund(self.flight.pk)
+        cancel_flight_and_refund(self.flight.pk)
+        self.assertEqual(self.notes(Notification.Kind.FLIGHT_CANCELLED).count(), 1)
+
+    # ----- the user's side ------------------------------------------------------
+    def test_the_notification_appears_in_the_list_and_leads_to_the_reservation(self):
+        reservation = self.book_and_pay()
+
+        page = self.client.get(reverse('notifications:list'))
+        self.assertContains(page, 'بلیت شما صادر شد')
+
+        note = self.notes(Notification.Kind.PAYMENT_SUCCESS).get()
+        response = self.client.get(reverse('notifications:open', kwargs={'pk': note.pk}))
+        self.assertRedirects(response, self.detail_url(reservation), fetch_redirect_response=False)
+        note.refresh_from_db()
+        self.assertTrue(note.is_read)
