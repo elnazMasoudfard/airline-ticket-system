@@ -1,0 +1,23 @@
+{% load notification_tags %}
+{# One notification. Input: n  (a Notification). Unread ones are tinted, bold and have a dot. #}
+<li class="notification{% if not n.is_read %} notification-unread{% endif %}">
+  <span class="notification-dot" aria-hidden="true"></span>
+
+  {% if n.url %}<a class="notification-body" href="{% url 'notifications:open' n.pk %}">{% else %}<div class="notification-body">{% endif %}
+    <span class="notification-head">
+      <span class="badge {{ n.badge_class }}">{{ n.get_kind_display }}</span>
+      {% if not n.is_read %}<span class="sr-only">(خوانده‌نشده)</span>{% endif %}
+      <time class="notification-time" datetime="{{ n.created_at|date:'c' }}" title="{{ n.created_at|date:'Y/m/d H:i' }}">{{ n.created_at|time_ago }}</time>
+    </span>
+    <strong class="notification-title">{{ n.title }}</strong>
+    {% if n.message %}<span class="notification-message">{{ n.message }}</span>{% endif %}
+  {% if n.url %}</a>{% else %}</div>{% endif %}
+
+  {% if not n.is_read %}
+    <form action="{% url 'notifications:mark_read' n.pk %}" method="post" class="inline-form notification-action">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      <button type="submit" class="btn btn-ghost btn-sm">خوانده شد</button>
+    </form>
+  {% endif %}
+</li>

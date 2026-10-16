@@ -1,0 +1,23 @@
+{% load notification_tags %}
+{# A box with the latest notifications, for the profile page: {% include 'notifications/_profile_section.html' %} #}
+{% recent_notifications 5 as recent_notes %}
+{% unread_notification_count as unread_notes %}
+<section class="form-section notification-section">
+  <div class="notification-section-header">
+    <h2>
+      اعلان‌ها
+      {% if unread_notes %}<span class="badge badge-warning">{{ unread_notes }} خوانده‌نشده</span>{% endif %}
+    </h2>
+    <a href="{% url 'notifications:list' %}" class="btn btn-ghost btn-sm">مشاهده‌ی همه</a>
+  </div>
+
+  {% if recent_notes %}
+    <ul class="notification-list">
+      {% for n in recent_notes %}
+        {% include 'notifications/_notification_item.html' %}
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="empty-hint">هنوز اعلانی ندارید.</p>
+  {% endif %}
+</section>

@@ -1,0 +1,46 @@
+{% extends 'base.html' %}
+{% block title %}اعلان‌ها{% endblock %}
+
+{% block content %}
+<div class="dashboard-toolbar">
+  <h1 class="page-title" style="margin-bottom: 0;">
+    اعلان‌ها
+    {% if unread_count %}<span class="badge badge-warning">{{ unread_count }} خوانده‌نشده</span>{% endif %}
+  </h1>
+
+  {% if unread_count %}
+    <form action="{% url 'notifications:mark_all_read' %}" method="post">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      <button type="submit" class="btn btn-ghost btn-sm">علامت‌زدن همه به‌عنوان خوانده‌شده</button>
+    </form>
+  {% endif %}
+</div>
+
+<div class="filter-tabs" style="margin-bottom: 18px;">
+  <a href="{% url 'notifications:list' %}" class="btn btn-sm {% if not current_filter %}btn-primary{% else %}btn-ghost{% endif %}">همه</a>
+  <a href="{% url 'notifications:list' %}?filter=unread" class="btn btn-sm {% if current_filter == 'unread' %}btn-primary{% else %}btn-ghost{% endif %}">
+    خوانده‌نشده{% if unread_count %} <span class="mono">({{ unread_count }})</span>{% endif %}
+  </a>
+</div>
+
+{% if notifications %}
+  <ul class="notification-list">
+    {% for notification in notifications %}
+      {% include 'notifications/_notification_item.html' with n=notification %}
+    {% endfor %}
+  </ul>
+
+  {% include 'partials/pagination.html' %}
+{% else %}
+  <div class="empty-state">
+    {% if current_filter == 'unread' %}
+      <p>همه‌ی اعلان‌ها را خوانده‌اید.</p>
+      <p class="empty-hint"><a href="{% url 'notifications:list' %}" class="btn btn-ghost" style="margin-top:14px;">نمایش همه‌ی اعلان‌ها</a></p>
+    {% else %}
+      <p>هنوز اعلانی ندارید.</p>
+      <p class="empty-hint">پرداخت‌ها، مهلت رزروها و لغو پروازها اینجا نمایش داده می‌شوند.</p>
+    {% endif %}
+  </div>
+{% endif %}
+{% endblock %}

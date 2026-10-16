@@ -1,0 +1,17 @@
+from django.core.management.base import BaseCommand
+
+from notifications.services import delete_read_older_than
+
+
+class Command(BaseCommand):
+    help = "حذف اعلان‌هایی که مدت‌ها پیش خوانده شده‌اند (اعلان‌های خوانده‌نشده هیچ‌وقت حذف نمی‌شوند)."
+
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--days', type=int, default=90,
+            help="اعلان‌های خوانده‌شده‌ی قدیمی‌تر از این تعداد روز حذف می‌شوند (پیش‌فرض ۹۰).",
+        )
+
+    def handle(self, *args, **options):
+        deleted = delete_read_older_than(options['days'])
+        self.stdout.write(self.style.SUCCESS(f"{deleted} notification(s) deleted."))

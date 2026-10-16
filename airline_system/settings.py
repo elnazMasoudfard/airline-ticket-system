@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     'flights',
     'tickets',
     'dashboard',
+    'notifications',
 ]
 
 # Auth settings
@@ -230,6 +231,9 @@ TICKETS_MAX_SEATS_PER_RESERVATION = config('TICKETS_MAX_SEATS_PER_RESERVATION', 
 TICKETS_MAX_PENDING_RESERVATIONS_PER_USER = config(
     'TICKETS_MAX_PENDING_RESERVATIONS_PER_USER', default=3, cast=int
 )
+# Minutes before the payment deadline at which the user gets a warning notification
+# (sent by the scheduled `expire_reservations` command).
+TICKETS_EXPIRY_WARNING_MINUTES = config('TICKETS_EXPIRY_WARNING_MINUTES', default=5, cast=int)
 # Check the Iranian national-ID check digit. Turn on once your data uses real national codes.
 TICKETS_VALIDATE_NATIONAL_ID_CHECKSUM = config(
     'TICKETS_VALIDATE_NATIONAL_ID_CHECKSUM', default=False, cast=bool
@@ -323,6 +327,12 @@ LOGGING = {
             'propagate': False,
         },
         'dashboard': {
+            'handlers': ['console', 'file_general', 'file_errors'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        # in-app notifications (bell, list, events of the booking flow)
+        'notifications': {
             'handlers': ['console', 'file_general', 'file_errors'],
             'level': 'INFO',
             'propagate': False,
